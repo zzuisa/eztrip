@@ -34,11 +34,11 @@ echo.
 
 if exist "%CONDA_BAT%" (
   echo [INFO] Starting backend in a new window...
-  start "TripPlanner Backend" cmd /k "chcp 65001 && call %CONDA_BAT% activate py310 && cd /d %BACKEND_DIR% && set PYTHONIOENCODING=utf-8 && uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000"
+  start "TripPlanner Backend" cmd /k "chcp 65001 && call %CONDA_BAT% activate py310 && cd /d %BACKEND_DIR% && set PYTHONIOENCODING=utf-8 && uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8881"
 ) else (
   echo [WARN] conda.bat not found at "%CONDA_BAT%".
   echo [WARN] Trying to run backend without conda activation...
-  start "TripPlanner Backend" cmd /k "chcp 65001 && cd /d %BACKEND_DIR% && set PYTHONIOENCODING=utf-8 && uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000"
+  start "TripPlanner Backend" cmd /k "chcp 65001 && cd /d %BACKEND_DIR% && set PYTHONIOENCODING=utf-8 && uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8881"
 )
 
 echo [INFO] Starting frontend in a new window...
@@ -46,7 +46,7 @@ start "TripPlanner Frontend" cmd /k "chcp 65001 && cd /d %FRONTEND_DIR% && npm r
 
 echo.
 echo [DONE] Startup commands launched.
-echo         Backend:  http://localhost:8000
+echo         Backend:  http://localhost:8881
 echo         Frontend: http://localhost:5173
 echo.
 echo Press any key to close this launcher window...
