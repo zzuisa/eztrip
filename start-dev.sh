@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -z "${NOHUP_STARTED:-}" ]]; then
+  export NOHUP_STARTED=1
+  nohup "$0" "$@" >/dev/null 2>&1 &
+  exit 0
+fi
+
 # =========================================================
 # Guardian-style nohup startup script for backend + frontend
 # Usage:
@@ -42,9 +48,9 @@ start_backend() {
   echo "[INFO] Starting backend..."
   if [[ -n "${CONDA_BAT_PATH}" && -f "${CONDA_BAT_PATH}" ]]; then
     # Run backend detached via nohup -> cmd.exe /c ... so it survives terminal close.
-    nohup cmd.exe /c "chcp 65001 >nul && call \"${CONDA_BAT_PATH}\" activate py310 && cd /d \"${BACKEND_DIR}\" && set PYTHONIOENCODING=utf-8 && ${UVICORN_CMD[*]}" >"${BACKEND_LOG}" 2>&1 &
+    nohup cmd.exe /c "chcp 65001 >nul && call \"${CONDA_BAT_PATH}\" activate py310 && cd /d \"${BACKEND_DIR}\" && set PYTHONIOENCODING=utf-8 && ${UVICORN_CMD[*]}" >>"${BACKEND_LOG}" 2>&1 < /dev/null &
   else
-    nohup bash -lc "cd \"${BACKEND_DIR}\" && export PYTHONIOENCODING=utf-8 && ${UVICORN_CMD[*]}" >"${BACKEND_LOG}" 2>&1 &
+    nohup bash -lc "cd \"${BACKEND_DIR}\" && export PYTHONIOENCODING=utf-8 && ${UVICORN_CMD[*]}" >>"${BACKEND_LOG}" 2>&1 < /dev/null &
   fi
   echo $! > "${BACKEND_PID_FILE}"
   echo "[INFO] Backend PID: $(cat "${BACKEND_PID_FILE}")"
@@ -52,7 +58,7 @@ start_backend() {
 
 start_frontend() {
   echo "[INFO] Starting frontend..."
-  nohup bash -lc "cd \"${FRONTEND_DIR}\" && ${NPM_CMD[*]}" >"${FRONTEND_LOG}" 2>&1 &
+  nohup bash -lc "cd \"${FRONTEND_DIR}\" && ${NPM_CMD[*]}" >>"${FRONTEND_LOG}" 2>&1 < /dev/null &
   echo $! > "${FRONTEND_PID_FILE}"
   echo "[INFO] Frontend PID: $(cat "${FRONTEND_PID_FILE}")"
 }
@@ -68,7 +74,7 @@ cleanup() {
   fi
 }
 
-trap cleanup EXIT INT TERM
+trap cleanup INT TERM
 
 printf '[INFO] Root: %s\n' "${ROOT_DIR}"
 printf '[INFO] Backend: %s\n' "${BACKEND_DIR}"
@@ -89,4 +95,4 @@ echo "       Frontend -> ${FRONTEND_LOG}"
 echo ""
 echo "[INFO] This script is detached via nohup; stop processes with PIDs from logs/*.pid or use kill."
 
-wait
+exit 0
