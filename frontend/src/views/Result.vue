@@ -825,7 +825,8 @@ const loadAttractionPhotos = async () => {
         return
       }
 
-      const promise = fetch(`http://localhost:8000/api/poi/photo?name=${encodeURIComponent(attraction.name)}`)
+      const apiBase = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8881'
+      const promise = fetch(`${apiBase}/api/poi/photo?name=${encodeURIComponent(attraction.name)}`)
         .then(res => res.json())
         .then(data => {
           if (data.success && data.data.photo_url) {
