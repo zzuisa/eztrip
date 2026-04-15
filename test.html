@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>法国 5 天经典旅行规划（含路线图）</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin:0; font-family:system-ui; line-height:1.6; background:#f8f9fa; }
+        h1, h2 { color:#1a73e8; }
+        .container { max-width:1100px; margin:20px auto; padding:20px; background:white; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,0.1); }
+        #map { height:650px; border-radius:12px; margin-bottom:30px; }
+        .day { margin-bottom:40px; padding:20px; background:#f0f7ff; border-radius:12px; }
+        .popup-route { font-size:14px; line-height:1.5; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 法国 5 天巴黎经典旅行规划</h1>
+        <p style="text-align:center;color:#555;">每个景点都配有实时路线图 · 点击标记点查看专属路线说明</p>
+
+        <!-- 交互地图（核心：路线图） -->
+        <div id="map"></div>
+
+        <!-- 日程文字部分 -->
+        <div class="day">
+            <h2>Day 1：巴黎标志地标环线（埃菲尔铁塔 → 凯旋门）</h2>
+            <p><strong>路线总长</strong>：约 6km（步行+地铁 1 小时）</p>
+            <ul>
+                <li>上午：埃菲尔铁塔（登塔看全景）</li>
+                <li>下午：凯旋门 + 香榭丽舍大道</li>
+                <li>晚上：塞纳河夜游</li>
+            </ul>
+        </div>
+
+        <div class="day">
+            <h2>Day 2：艺术圣地（卢浮宫 → 圣母院）</h2>
+            <p><strong>路线总长</strong>：约 4km（地铁直达）</p>
+            <ul>
+                <li>全天卢浮宫（提前网上预约）</li>
+                <li>下午塞纳河左岸散步 + 圣母院</li>
+            </ul>
+        </div>
+
+        <div class="day">
+            <h2>Day 3：凡尔赛宫一日游</h2>
+            <p><strong>路线</strong>：巴黎 → 凡尔赛（RER C 线 40 分钟）</p>
+        </div>
+
+        <div class="day">
+            <h2>Day 4-5：蒙马特 + 自由探索 / 南法延伸</h2>
+            <p>根据你的偏好可替换为普罗旺斯薰衣草田（需高铁）。</p>
+        </div>
+
+        <p style="text-align:center;margin-top:30px;">
+            <strong>提示</strong>：地图上蓝色折线 = 推荐每日路线。你可以直接复制此文件到你的项目中，后续用 Google Places API 动态替换景点。
+        </p>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([48.8566, 2.3522], 11);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap | Powered by Google Places API'
+        }).addTo(map);
+
+        // 景点数据（每个都有专属路线说明）
+        const attractions = [
+            { name: "埃菲尔铁塔", lat: 48.8584, lng: 2.2945, route: "地铁6号线 Bir-Hakeim 站下车，步行 5 分钟。建议傍晚登塔看日落，票价 €29。" },
+            { name: "凯旋门", lat: 48.8738, lng: 2.2950, route: "从埃菲尔铁塔沿香榭丽舍大道步行 40 分钟，或地铁1号线 Charles de Gaulle-Étoile 站。登顶看星形大道，€16。" },
+            { name: "卢浮宫", lat: 48.8606, lng: 2.3376, route: "地铁1号线 Palais Royal-Musée du Louvre 站。提前 2 周预约，避开周二闭馆。" },
+            { name: "圣母院", lat: 48.8530, lng: 2.3499, route: "卢浮宫沿塞纳河步行 15 分钟。2024 重开后人多，建议早 9 点到。" },
+            { name: "凡尔赛宫", lat: 48.8049, lng: 2.1204, route: "巴黎圣米歇尔站坐 RER C 线直达 Versailles-Château 站（40 分钟），€12。" },
+            { name: "蒙马特高地", lat: 48.8867, lng: 2.3430, route: "地铁12号线 Abbesses 站 + 缆车上山。看艺术家广场 + 圣心大教堂。" },
+            { name: "奥赛博物馆", lat: 48.8600, lng: 2.3266, route: "卢浮宫旁，地铁12号线 Solférino 站。印象派爱好者必去。" },
+            { name: "普罗旺斯薰衣草田", lat: 43.9499, lng: 4.8984, route: "巴黎高铁到 Avignon（3 小时）+ 巴士。仅 6-7 月开放，建议 Day 5 延伸。" }
+        ];
+
+        // 添加标记 + 弹出路线说明
+        attractions.forEach((a, index) => {
+            L.marker([a.lat, a.lng], {
+                title: `${index+1}. ${a.name}`
+            })
+            .addTo(map)
+            .bindPopup(`
+                <h3>${a.name}</h3>
+                <div class="popup-route"><strong>🚶 路线图说明：</strong><br>${a.route}</div>
+                <small>点击这里可放大查看周边</small>
+            `, { maxWidth: 320 });
+        });
+
+        // 绘制推荐整体路线（Polyline）
+        const routePoints = [
+            [48.8584, 2.2945], [48.8738, 2.2950],
+            [48.8606, 2.3376], [48.8530, 2.3499],
+            [48.8867, 2.3430], [48.8049, 2.1204]
+        ];
+        L.polyline(routePoints, { color: '#1a73e8', weight: 5, opacity: 0.8 }).addTo(map);
+
+        console.log("✅ 5 天法国旅行规划地图已加载！每个景点都有独立路线说明。");
+    </script>
+</body>
+</html>

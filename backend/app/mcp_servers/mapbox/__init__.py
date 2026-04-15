@@ -1,0 +1,2 @@
+"""Mapbox MCP server package."""
+
