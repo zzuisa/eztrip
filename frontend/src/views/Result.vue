@@ -414,7 +414,6 @@ import { computed, ref, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { DownOutlined } from '@ant-design/icons-vue'
-import mapboxgl from 'mapbox-gl'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import type { TripPlan } from '@/types'
@@ -423,6 +422,7 @@ import { buildPosterStory } from '@/services/poster-data-service'
 import TripPosterGallery from '@/components/poster/TripPosterGallery.vue'
 import { useItineraryEditing } from '@/composables/useItineraryEditing'
 import { useResultPage } from '@/composables/useResultPage'
+import { useMapState } from '@/composables/useMapState'
 
 const router = useRouter()
 const route = useRoute()
@@ -444,16 +444,6 @@ const {
   cancelEdit: cancelEditMode,
   saveChanges: saveEdits,
 } = useItineraryEditing(tripPlan, { itineraryIdHint: String(route.params.id || '') })
-let map: any = null
-let popup: any = null
-const routeColors = ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96', '#13c2c2']
-const MAP_DEFAULT_ZOOM = 12
-const MAP_FOCUS_ZOOM = 15
-const MAP_MEAL_FOCUS_ZOOM = 15.5
-const MAP_STORY_ZOOM = 14.5
-let markerInstances: any[] = []
-let routeLayerIds: string[] = []
-let routeSourceIds: string[] = []
 const reasonExpanded = ref<Record<number, boolean>>({})
 const posterStory = computed(() => buildPosterStory({
   city: tripPlan.value?.city || '',
@@ -703,9 +693,7 @@ const saveChanges = () => {
   message.success('修改已保存')
 
   // 重新初始化地图以反映更改
-  if (map) {
-    map.remove()
-  }
+  destroyMap()
   nextTick(() => {
     initMap()
   })
@@ -876,12 +864,7 @@ watch(currentDeepLinkDayIndex, (dayIndex) => {
   deepLinkItems.value = buildDayDeepLinkItems(dayIndex)
 })
 
-watch(activeDays, () => {
-  if (!map) return
-  window.setTimeout(() => {
-    startDayStoryAnimation(getActiveDayIndex())
-  }, 180)
-})
+// activeDays 的地图故事切换已由 useMapState 内部 watch 处理
 
 const copyAddress = async (address?: string) => {
   if (!address) return message.warning('暂无地址可复制')
@@ -899,383 +882,37 @@ const getPlaceKey = (dayIndex: number, name: string, kind: 'attraction' | 'meal'
 
 const getAttractionCardId = (dayIndex: number, index: number) => `day-${dayIndex}-attraction-${index}`
 const getMealCardId = (dayIndex: number, mealType: string) => `day-${dayIndex}-meal-${mealType}`
-const mapStory = ref<{
-  visible: boolean
-  current: { name: string; description: string; address: string; image: string }
-  next: { name: string; description: string; address: string; image: string } | null
-  transitionProgress: number
-}>({
-  visible: false,
-  current: { name: '', description: '', address: '', image: '' },
-  next: null,
-  transitionProgress: 0,
-})
-let walkerMarker: any = null
-let walkerAnimationFrame: number | null = null
-let walkerPauseTimer: number | null = null
-
-const focusMapOn = (lng: number, lat: number, zoom = MAP_FOCUS_ZOOM) => {
-  if (!map) return
-  if (map.isStyleLoaded()) {
-    map.resize()
-  }
-  map.flyTo({ center: [lng, lat], zoom, essential: true })
-}
-
-const focusMapWithPageTransition = (lng: number, lat: number, zoom = MAP_FOCUS_ZOOM) => {
-  const mapElement = document.getElementById('map')
-  if (mapElement) {
-    mapElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-  window.setTimeout(() => {
-    focusMapOn(lng, lat, zoom)
-  }, 420)
-}
-
-// 停止“小人导览动画”的所有异步任务（逐帧动画 + 定时停留）。
-const stopWalkerAnimation = () => {
-  // 如果当前存在 requestAnimationFrame 句柄，则取消它，避免重复渲染。
-  if (walkerAnimationFrame !== null) {
-    // 取消上一帧注册的动画回调。
-    cancelAnimationFrame(walkerAnimationFrame)
-    // 重置句柄，表示当前没有进行中的帧动画。
-    walkerAnimationFrame = null
-  }
-  // 如果当前存在“到站停留”的定时器，则清理它，避免串场。
-  if (walkerPauseTimer !== null) {
-    // 清理 setTimeout，防止旧回调在未来时刻触发。
-    window.clearTimeout(walkerPauseTimer)
-    // 重置定时器句柄。
-    walkerPauseTimer = null
-  }
-}
-
-// 删除地图上的小人 marker（切天、重播、销毁时会调用）。
-const removeWalkerMarker = () => {
-  // 容错处理：防止 marker.remove() 在异常场景抛错导致流程中断。
-  try {
-    // 如果 marker 存在，则从地图上移除。
-    if (walkerMarker) walkerMarker.remove()
-  } catch (_) {}
-  // 无论成功与否都清空引用，避免悬挂对象。
-  walkerMarker = null
-}
-
-// 创建一个新的小人 marker，并返回实例。
-const createWalkerMarker = () => {
-  // 没有地图实例时无法创建 marker，直接返回空。
-  if (!map) return null
-  // 创建 DOM 元素作为 marker 的视觉承载。
-  const markerEl = document.createElement('div')
-  // 绑定样式类，用于控制小人图标外观。
-  markerEl.className = 'walker-marker'
-  // 设置小人 emoji，可直观看到导览角色。
-  markerEl.textContent = '🚶'
-  // 使用 Mapbox Marker 创建地图标记，并将锚点放在底部更自然贴地。
-  walkerMarker = new mapboxgl.Marker({ element: markerEl, anchor: 'bottom' })
-  // 返回创建好的 marker 供后续 setLngLat/addTo 使用。
-  return walkerMarker
-}
-
-// 基于“当天时间轴条目”构造动画站点（包含景点 + 餐饮）。
-const getAnimatedStopsByDay = (dayIndex: number) => {
-  // 按索引取当天数据。
-  const day = getTripDays()[dayIndex]
-  // 如果当天不存在，返回空数组，外层会直接退出动画。
-  if (!day) return []
-  // 拉平当天时间槽位，得到按时段排序的条目数组。
-  const timelineEntries = getTimelineSlots(day).flatMap((slot: any) => slot.entries || [])
-  // 过滤掉没有经纬度的条目，并映射成动画所需统一结构。
-  return timelineEntries
-    // 仅保留可定位的条目（有 longitude/latitude）。
-    .filter((entry: any) => entry?.longitude !== undefined && entry?.latitude !== undefined)
-    // 把原始条目转换为动画站点对象。
-    .map((entry: any, idx: number) => {
-      // 判断当前条目是否为景点，用于选择图片来源。
-      const isAttraction = entry.kind === 'attraction'
-      // 景点使用真实/占位图；餐饮生成绿色餐饮 SVG 占位图。
-      const image = isAttraction
-        ? getAttractionImageByName(day, entry.title)
-        : `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(
-            `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">
-              <defs>
-                <linearGradient id="mealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" style="stop-color:#34d399;stop-opacity:1" />
-                  <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
-                </linearGradient>
-              </defs>
-              <rect width="400" height="300" fill="url(#mealGrad)"/>
-              <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="42" fill="white">🍽️</text>
-              <text x="50%" y="62%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="22" fill="white">${entry.title || `餐饮${idx + 1}`}</text>
-            </svg>`
-          )))}`
-      // 返回统一站点结构：名称、文案、地址、坐标、图片。
-      return {
-        // 标题优先用条目标题，没有则兜底“站点X”。
-        name: entry.title || `站点${idx + 1}`,
-        // 描述优先 description，再回退 route_desc。
-        description: entry.description || entry.route_desc || '',
-        // 地址字段兜底为空串，避免模板显示 undefined。
-        address: entry.address || '',
-        // 经度。
-        lng: entry.longitude,
-        // 纬度。
-        lat: entry.latitude,
-        // 当前站点展示图。
-        image,
-      }
-    })
-}
-
-// 将折叠面板 activeKey 统一解析成“当前天索引”。
-const getActiveDayIndex = (): number => {
-  // 读取 collapse 的 active key（可能是数组/数字/字符串）。
-  const value = activeDays.value as any
-  // 如果是数组（常见场景），取第一个 active key。
-  if (Array.isArray(value)) {
-    // 取第一个元素作为当前天。
-    const first = value[0]
-    // 如果本来就是数字直接返回，否则强转数字并兜底 0。
-    return typeof first === 'number' ? first : Number(first || 0)
-  }
-  // 如果是数字直接返回。
-  if (typeof value === 'number') return value
-  // 如果是字符串，转数字并兜底 0。
-  if (typeof value === 'string') return Number(value || 0)
-  // 兜底返回第 0 天。
-  return 0
-}
-
-// 启动某一天的地图故事动画（会自动循环）。
-const startDayStoryAnimation = (dayIndex: number) => {
-  // 无地图实例则无法播放动画。
-  if (!map) return
-  // 开始前先停止旧动画，避免双实例并行。
-  stopWalkerAnimation()
-  // 开始前移除旧小人 marker，确保只有一个角色在地图上。
-  removeWalkerMarker()
-  // 取当天可播放站点。
-  const stops = getAnimatedStopsByDay(dayIndex)
-  // 无站点时隐藏故事卡片并退出。
-  if (stops.length === 0) {
-    // 关闭左上角故事卡片。
-    mapStory.value.visible = false
-    // 结束函数。
-    return
-  }
-
-  // 创建小人 marker。
-  const marker = createWalkerMarker()
-  // 创建失败（极端情况）则退出。
-  if (!marker) return
-  // 小人放到第一站，并挂到地图上。
-  marker.setLngLat([stops[0].lng, stops[0].lat]).addTo(map)
-
-  // 打开故事卡片层。
-  mapStory.value.visible = true
-  // 设置当前卡片为第一站。
-  mapStory.value.current = {
-    // 当前站标题。
-    name: stops[0].name,
-    // 当前站描述。
-    description: stops[0].description,
-    // 当前站地址。
-    address: stops[0].address,
-    // 当前站图片。
-    image: stops[0].image,
-  }
-  // 如果存在第二站，则先作为“下一站”预告卡片。
-  mapStory.value.next = stops[1]
-    ? {
-        // 下一站标题。
-        name: stops[1].name,
-        // 下一站描述。
-        description: stops[1].description,
-        // 下一站地址。
-        address: stops[1].address,
-        // 下一站图片。
-        image: stops[1].image,
-      }
-    // 没有下一站则置空。
-    : null
-  // 初始化卡片过渡进度为 0（仅显示当前卡片）。
-  mapStory.value.transitionProgress = 0
-
-  // 开场先飞到第一站，给用户一个明确起点。
-  map.flyTo({ center: [stops[0].lng, stops[0].lat], zoom: MAP_STORY_ZOOM, essential: true })
-  // 如果只有一个站点，无需段动画，停在当前即可。
-  if (stops.length === 1) return
-
-  // 全部站点走完后，循环前的短停留时长（毫秒）。
-  const loopPauseDuration = 900
-  // 缓动函数：前后慢、中间快，移动更自然。
-  const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
-  // 计算两点球面距离（公里），用于动态速度控制。
-  const calcDistanceKm = (from: { lng: number; lat: number }, to: { lng: number; lat: number }) => {
-    // 角度转弧度函数。
-    const toRad = (v: number) => (v * Math.PI) / 180
-    // 地球半径（km）。
-    const earthRadiusKm = 6371
-    // 纬度差（弧度）。
-    const dLat = toRad(to.lat - from.lat)
-    // 经度差（弧度）。
-    const dLng = toRad(to.lng - from.lng)
-    // Haversine 公式中间值 a。
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRad(from.lat)) * Math.cos(toRad(to.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2)
-    // Haversine 公式中间值 c。
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    // 返回球面距离（km）。
-    return earthRadiusKm * c
-  }
-  // 根据两点距离计算“移动时长”（ms）：近距不闪，远距不拖。
-  const calcSegmentDuration = (from: { lng: number; lat: number }, to: { lng: number; lat: number }) => {
-    // 先算公里距离。
-    const distanceKm = calcDistanceKm(from, to)
-    // 次线性增长，防止远距离时长爆炸。
-    const dynamic = 2400 + Math.sqrt(distanceKm + 0.02) * 2100
-    // 限制在 [2600, 5600] 区间。
-    return Math.min(5600, Math.max(2600, dynamic))
-  }
-  // 根据两点距离计算“到站停留时长”（ms）：确保读卡片有时间。
-  const calcStopDuration = (from: { lng: number; lat: number }, to: { lng: number; lat: number }) => {
-    // 先算公里距离。
-    const distanceKm = calcDistanceKm(from, to)
-    // 次线性增长，远距离适度多停留。
-    const dynamic = 1200 + Math.sqrt(distanceKm + 0.02) * 700
-    // 限制在 [1100, 2300] 区间。
-    return Math.min(2300, Math.max(1100, dynamic))
-  }
-
-  // 播放某一段（from -> to）的移动动画。
-  const runSegment = (segmentIndex: number) => {
-    // 当前段起点站。
-    const from = stops[segmentIndex]
-    // 当前段终点站。
-    const to = stops[segmentIndex + 1]
-    // 若段数据不完整，则清空“下一站”状态并结束。
-    if (!from || !to) {
-      // 过渡进度归零。
-      mapStory.value.transitionProgress = 0
-      // 下一站清空。
-      mapStory.value.next = null
-      // 退出当前段。
-      return
-    }
-    // 计算本段移动时长。
-    const segmentDuration = calcSegmentDuration(from, to)
-    // 计算到站后停留时长。
-    const stopDuration = calcStopDuration(from, to)
-    // 记录本段开始时间戳。
-    const startTime = performance.now()
-
-    // 每一帧回调：计算当前进度并更新小人位置/镜头/卡片过渡。
-    const tick = (now: number) => {
-      // 线性进度，范围 [0,1]。
-      const rawProgress = Math.min((now - startTime) / segmentDuration, 1)
-      // 应用缓动后的进度，移动更平滑。
-      const eased = easeInOut(rawProgress)
-      // 插值得到当前经度。
-      const lng = from.lng + (to.lng - from.lng) * eased
-      // 插值得到当前纬度。
-      const lat = from.lat + (to.lat - from.lat) * eased
-      // 更新小人 marker 到当前坐标。
-      marker.setLngLat([lng, lat])
-      // 移动过程中镜头持续跟随小人。
-      map.easeTo({
-        // 跟随中心点。
-        center: [lng, lat],
-        // 跟随缩放等级。
-        zoom: MAP_STORY_ZOOM,
-        // 每次小步跟随的动画时长。
-        duration: 180,
-        // 线性 easing，避免镜头二次变速。
-        easing: (v: number) => v,
-        // 声明此动画为关键动画。
-        essential: true,
-      })
-
-      // 小人离站后即展示下一站：这里 0~0.25 迅速将过渡推到 1。
-      mapStory.value.transitionProgress = Math.min(rawProgress / 0.25, 1)
-
-      // 若还没到终点，继续请求下一帧。
-      if (rawProgress < 1) {
-        // 存储 rAF 句柄，方便外部随时停止。
-        walkerAnimationFrame = requestAnimationFrame(tick)
-        // 本帧结束。
+const {
+  routeColors,
+  mapStory,
+  initMap,
+  destroyMap,
+  focusMapOn,
+  focusMapWithPageTransition,
+  getMapSnapshotDataUrl,
+} = useMapState(
+  { tripPlan, activeDays, selectedPlaceKey },
+  {
+    getPlaceKey,
+    getMealLabel,
+    getTimelineSlots,
+    onMarkerSelected: ({ kind, dayIndex, name, mealType }) => {
+      if (kind === 'attraction') {
+        const day = getTripDays()[dayIndex]
+        const idx = day?.attractions?.findIndex((a: any) => a?.name === name) ?? -1
+        if (idx >= 0) focusAttraction(dayIndex, idx)
         return
       }
-
-      // 到站时把“下一站卡片”保持为完整可见，避免突兀切换。
-      mapStory.value.transitionProgress = 1
-      // 预取“未来站点”（下一段的终点），用于更新 next 卡片。
-      const future = stops[segmentIndex + 2]
-      // 到站后先短暂停顿，再执行卡片切换。
-      walkerPauseTimer = window.setTimeout(() => {
-        // 定时器触发后先清空句柄。
-        walkerPauseTimer = null
-        // 把当前卡片切换为刚到达的 to 站。
-        mapStory.value.current = {
-          // 新当前站标题。
-          name: to.name,
-          // 新当前站描述。
-          description: to.description,
-          // 新当前站地址。
-          address: to.address,
-          // 新当前站图片。
-          image: to.image,
-        }
-        // 更新下一站卡片（如果 future 存在）。
-        mapStory.value.next = future
-          ? {
-              // future 标题。
-              name: future.name,
-              // future 描述。
-              description: future.description,
-              // future 地址。
-              address: future.address,
-              // future 图片。
-              image: future.image,
-            }
-          // 没有 future 时置空。
-          : null
-        // 当前段切换完成后，过渡进度重置。
-        mapStory.value.transitionProgress = 0
-
-        // 如果后面还有段，则按停留时长后播放下一段。
-        if (segmentIndex + 1 < stops.length - 1) {
-          // 创建下一段启动定时器。
-          walkerPauseTimer = window.setTimeout(() => {
-            // 触发后清空句柄。
-            walkerPauseTimer = null
-            // 递归播放下一段。
-            runSegment(segmentIndex + 1)
-          }, stopDuration)
-        } else {
-          // 末站处理：短暂停留后从第一站重播，实现循环。
-          walkerPauseTimer = window.setTimeout(() => {
-            // 触发后清空句柄。
-            walkerPauseTimer = null
-            // 从 dayIndex 重新启动整天动画。
-            startDayStoryAnimation(dayIndex)
-          }, loopPauseDuration)
-        }
-      }, 700)
-    }
-
-    // 启动当前段第一帧。
-    walkerAnimationFrame = requestAnimationFrame(tick)
-  }
-
-  // 从第 0 段开始播放整天路线。
-  runSegment(0)
-}
-
+      const day = getTripDays()[dayIndex]
+      const meal = day?.meals?.find((m: any) => String(m?.name || '') === name && String(m?.type || '') === String(mealType || ''))
+      if (meal) focusMeal(dayIndex, meal)
+    },
+  },
+)
 const focusPlace = (entry: any) => {
   selectedPlaceKey.value = entry.key
   if (entry.longitude && entry.latitude) {
-    focusMapWithPageTransition(entry.longitude, entry.latitude, entry.kind === 'meal' ? MAP_MEAL_FOCUS_ZOOM : MAP_FOCUS_ZOOM)
+    focusMapWithPageTransition(entry.longitude, entry.latitude, entry.kind === 'meal' ? 15.5 : 15)
   }
 }
 
@@ -1293,7 +930,7 @@ const focusAttraction = (dayIndex: number, index: number) => {
 const focusMeal = (dayIndex: number, meal: any) => {
   selectedPlaceKey.value = getPlaceKey(dayIndex, meal.name, 'meal', meal.type)
   if (meal.location?.longitude && meal.location?.latitude) {
-    focusMapWithPageTransition(meal.location.longitude, meal.location.latitude, MAP_MEAL_FOCUS_ZOOM)
+    focusMapWithPageTransition(meal.location.longitude, meal.location.latitude, 15.5)
   }
 }
 
@@ -1318,12 +955,12 @@ const openGoogleMapsCollection = () => {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-const scrollCardIntoView = (id: string) => {
+function scrollCardIntoView(id: string) {
   const el = document.getElementById(id)
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-const getTimelineSlots = (day: any) => {
+function getTimelineSlots(day: any) {
   const attractions = day.attractions || []
   const meals = day.meals || []
   const activities = ensureArray<any>(day.activities)
@@ -1517,15 +1154,11 @@ const exportAsImage = async () => {
     exportContainer.innerHTML = element.innerHTML
 
     // 处理地图截图
-    const mapContainer = document.getElementById('mapbox-container')
-    if (mapContainer && map) {
-      const mapCanvas = mapContainer.querySelector('canvas')
-      if (mapCanvas) {
-        const mapSnapshot = mapCanvas.toDataURL('image/png')
-        const exportMapContainer = exportContainer.querySelector('#mapbox-container')
-        if (exportMapContainer) {
-          exportMapContainer.innerHTML = `<img src="${mapSnapshot}" style="width:100%;height:100%;object-fit:cover;" />`
-        }
+    const mapSnapshot = getMapSnapshotDataUrl()
+    if (mapSnapshot) {
+      const exportMapContainer = exportContainer.querySelector('#mapbox-container')
+      if (exportMapContainer) {
+        exportMapContainer.innerHTML = `<img src="${mapSnapshot}" style="width:100%;height:100%;object-fit:cover;" />`
       }
     }
 
@@ -1654,15 +1287,11 @@ const exportAsPDF = async () => {
     exportContainer.innerHTML = element.innerHTML
 
     // 处理地图截图
-    const mapContainer = document.getElementById('mapbox-container')
-    if (mapContainer && map) {
-      const mapCanvas = mapContainer.querySelector('canvas')
-      if (mapCanvas) {
-        const mapSnapshot = mapCanvas.toDataURL('image/png')
-        const exportMapContainer = exportContainer.querySelector('#mapbox-container')
-        if (exportMapContainer) {
-          exportMapContainer.innerHTML = `<img src="${mapSnapshot}" style="width:100%;height:100%;object-fit:cover;" />`
-        }
+    const mapSnapshot = getMapSnapshotDataUrl()
+    if (mapSnapshot) {
+      const exportMapContainer = exportContainer.querySelector('#mapbox-container')
+      if (exportMapContainer) {
+        exportMapContainer.innerHTML = `<img src="${mapSnapshot}" style="width:100%;height:100%;object-fit:cover;" />`
       }
     }
 
@@ -1791,269 +1420,7 @@ const exportAsPDF = async () => {
   }
 }
 
-// 截取地图图片
-// 初始化地图
-const initMap = async () => {
-  try {
-    const token = (import.meta as any).env?.VITE_MAPBOX_ACCESS_TOKEN
-    if (!token) {
-      message.error('缺少 VITE_MAPBOX_ACCESS_TOKEN，无法加载地图')
-      return
-    }
-    mapboxgl.accessToken = token
-
-    const container = document.getElementById('mapbox-container')
-    if (!container) {
-      message.error('地图容器未找到')
-      return
-    }
-
-    if (map) {
-      try { map.remove() } catch (_) {}
-      map = null
-    }
-
-    map = new mapboxgl.Map({
-      container: 'mapbox-container',
-      style: 'mapbox://styles/mapbox/streets-v12',
-      center: [116.397128, 39.916527],
-      zoom: MAP_DEFAULT_ZOOM
-    })
-
-    map.on('load', () => {
-      map?.resize()
-      addAttractionMarkers()
-    })
-
-    window.setTimeout(() => {
-      map?.resize()
-    }, 120)
-    window.setTimeout(() => {
-      map?.resize()
-    }, 420)
-
-    message.success('地图加载成功')
-  } catch (error) {
-    console.error('地图加载失败:', error)
-    message.error('地图加载失败')
-  }
-}
-
-const clearMapOverlays = () => {
-  stopWalkerAnimation()
-  removeWalkerMarker()
-  mapStory.value.visible = false
-  markerInstances.forEach((m) => {
-    try { m.remove() } catch (_) {}
-  })
-  markerInstances = []
-  routeLayerIds.forEach((id) => {
-    try {
-      if (map?.getLayer(id)) map.removeLayer(id)
-    } catch (_) {}
-  })
-  routeSourceIds.forEach((id) => {
-    try {
-      if (map?.getSource(id)) map.removeSource(id)
-    } catch (_) {}
-  })
-  routeLayerIds = []
-  routeSourceIds = []
-}
-
-// 添加景点标记
-const addAttractionMarkers = () => {
-  if (!tripPlan.value) return
-
-  clearMapOverlays()
-
-  const markerBounds = new mapboxgl.LngLatBounds()
-  const allAttractions: any[] = []
-  const allMeals: any[] = []
-
-  // 收集所有景点
-  tripPlan.value.days.forEach((day, dayIndex) => {
-    day.attractions.forEach((attraction, attrIndex) => {
-      if (attraction.location && attraction.location.longitude && attraction.location.latitude) {
-        allAttractions.push({
-          ...attraction,
-          dayIndex,
-          attrIndex
-        })
-      }
-    })
-    ;(day.meals || []).forEach((meal) => {
-      if (meal.location && meal.location.longitude && meal.location.latitude) {
-        allMeals.push({
-          ...meal,
-          dayIndex,
-        })
-      }
-    })
-  })
-
-  // 创建标记
-  allAttractions.forEach((attraction) => {
-    const markerEl = document.createElement('div')
-    const dayColor = routeColors[attraction.dayIndex % routeColors.length]
-    markerEl.style.background = dayColor
-    markerEl.style.color = 'white'
-    markerEl.style.width = '28px'
-    markerEl.style.height = '28px'
-    markerEl.style.display = 'inline-flex'
-    markerEl.style.alignItems = 'center'
-    markerEl.style.justifyContent = 'center'
-    markerEl.style.borderRadius = '50%'
-    markerEl.style.fontSize = '11px'
-    markerEl.style.fontWeight = '700'
-    markerEl.style.cursor = 'pointer'
-    markerEl.style.border = '2px solid #fff'
-    markerEl.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)'
-    markerEl.style.whiteSpace = 'nowrap'
-    markerEl.textContent = `${attraction.attrIndex + 1}`
-
-    const lngLat: [number, number] = [attraction.location.longitude, attraction.location.latitude]
-
-    const marker = new mapboxgl.Marker({ element: markerEl, anchor: 'center' })
-      .setLngLat(lngLat)
-      .addTo(map)
-    markerInstances.push(marker)
-
-    markerBounds.extend(lngLat)
-
-    const html = `
-      <div style="padding: 8px; min-width: 220px;">
-        <h4 style="margin: 0 0 8px 0;">${attraction.name}</h4>
-        <p style="margin: 4px 0;"><strong>地址:</strong> ${attraction.address || '暂无'}</p>
-        <p style="margin: 4px 0;"><strong>游览时长:</strong> ${attraction.visit_duration || 0}分钟</p>
-        <p style="margin: 4px 0;"><strong>描述:</strong> ${attraction.description || '暂无描述'}</p>
-        <p style="margin: 4px 0; color: #1890ff;"><strong>第${attraction.dayIndex + 1}天 · 第${attraction.attrIndex + 1}站</strong></p>
-      </div>
-    `
-    const markerPopup = new mapboxgl.Popup({ offset: 24 }).setHTML(html)
-    marker.setPopup(markerPopup)
-    markerEl.addEventListener('click', () => {
-      if (popup && popup !== markerPopup) popup.remove()
-      popup = markerPopup
-      selectedPlaceKey.value = getPlaceKey(attraction.dayIndex, attraction.name, 'attraction')
-      marker.togglePopup()
-      focusAttraction(attraction.dayIndex, attraction.attrIndex)
-    })
-  })
-
-  // 创建餐饮标记（早餐/午餐/晚餐使用不同图案）
-  allMeals.forEach((meal) => {
-    const markerEl = document.createElement('div')
-    const dayColor = routeColors[meal.dayIndex % routeColors.length]
-    markerEl.style.background = '#ffffff'
-    markerEl.style.color = dayColor
-    markerEl.style.width = '26px'
-    markerEl.style.height = '26px'
-    markerEl.style.display = 'inline-flex'
-    markerEl.style.alignItems = 'center'
-    markerEl.style.justifyContent = 'center'
-    markerEl.style.borderRadius = '8px'
-    markerEl.style.fontSize = '11px'
-    markerEl.style.fontWeight = '700'
-    markerEl.style.cursor = 'pointer'
-    markerEl.style.border = `2px solid ${dayColor}`
-    markerEl.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)'
-
-    const mealMarkerMap: Record<string, string> = {
-      breakfast: 'B',
-      lunch: 'L',
-      dinner: 'D',
-      snack: 'S',
-    }
-    markerEl.textContent = mealMarkerMap[meal.type] || 'M'
-
-    const lngLat: [number, number] = [meal.location.longitude, meal.location.latitude]
-    const marker = new mapboxgl.Marker({ element: markerEl, anchor: 'center' })
-      .setLngLat(lngLat)
-      .addTo(map)
-    markerInstances.push(marker)
-    markerBounds.extend(lngLat)
-
-    const html = `
-      <div style="padding: 8px; min-width: 220px;">
-        <h4 style="margin: 0 0 8px 0;">${meal.name}</h4>
-        <p style="margin: 4px 0;"><strong>类型:</strong> ${getMealLabel(meal.type)}</p>
-        <p style="margin: 4px 0;"><strong>时间:</strong> ${meal.time || '待定'}</p>
-        <p style="margin: 4px 0;"><strong>地址:</strong> ${meal.address || '暂无'}</p>
-        <p style="margin: 4px 0;"><strong>描述:</strong> ${meal.description || '暂无描述'}</p>
-        <p style="margin: 4px 0; color: #1890ff;"><strong>第${meal.dayIndex + 1}天</strong></p>
-      </div>
-    `
-    const markerPopup = new mapboxgl.Popup({ offset: 24 }).setHTML(html)
-    marker.setPopup(markerPopup)
-    markerEl.addEventListener('click', () => {
-      if (popup && popup !== markerPopup) popup.remove()
-      popup = markerPopup
-      selectedPlaceKey.value = getPlaceKey(meal.dayIndex, meal.name, 'meal', meal.type)
-      marker.togglePopup()
-      focusMeal(meal.dayIndex, meal)
-    })
-  })
-
-  if (allAttractions.length > 0) {
-    map.fitBounds(markerBounds, { padding: 40 })
-  }
-
-  drawRoutes()
-  window.setTimeout(() => {
-    startDayStoryAnimation(getActiveDayIndex())
-  }, 280)
-}
-
-// 绘制路线
-const drawRoutes = () => {
-  if (!tripPlan.value) return
-
-  tripPlan.value.days.forEach((day, dayIndex) => {
-    const timelineEntries = getTimelineSlots(day).flatMap((slot: any) => slot.entries || [])
-    const coordinates = timelineEntries
-      .filter((entry: any) => entry.longitude !== undefined && entry.latitude !== undefined)
-      .map((entry: any) => [entry.longitude, entry.latitude] as [number, number])
-
-    if (coordinates.length < 2) return
-
-    const sourceId = `route-source-${dayIndex}`
-    const layerId = `route-layer-${dayIndex}`
-    const dayColor = routeColors[dayIndex % routeColors.length]
-
-    if (map.getLayer(layerId)) map.removeLayer(layerId)
-    if (map.getSource(sourceId)) map.removeSource(sourceId)
-    routeLayerIds.push(layerId)
-    routeSourceIds.push(sourceId)
-
-    map.addSource(sourceId, {
-      type: 'geojson',
-      data: {
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates
-        },
-        properties: {}
-      }
-    })
-
-    map.addLayer({
-      id: layerId,
-      type: 'line',
-      source: sourceId,
-      paint: {
-        'line-color': dayColor,
-        'line-width': 5,
-        'line-opacity': 0.85
-      },
-      layout: {
-        'line-cap': 'round',
-        'line-join': 'round'
-      }
-    })
-  })
-}
+// 地图初始化与 overlay 绘制已由 useMapState 接管
 </script>
 
 <style scoped>
