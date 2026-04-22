@@ -55,6 +55,7 @@ build/
 # 本地缓存 / 存储（运行时数据）
 backend/cache/
 backend/storage/
+specs/*/tests/.tmp-*/
 
 # 操作系统
 .DS_Store
