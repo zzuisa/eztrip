@@ -52,8 +52,8 @@
 
 **独立验收**：打开任意标准化行程后，页面可正常渲染；修改顺序/删除条目后可保存；刷新后可恢复。
 
-- [ ] T009 [P] 新建结果页组合式函数 `frontend/src/composables/useItineraryEditing.ts`，管理编辑模式、行程副本、拖拽排序、删除、插入与保存状态。**验收标准**：编辑逻辑从 `Result.vue` 中抽离；修改后状态可回写到持久化层；支持独立单测。
-- [ ] T010 [P] 新建结果页组合式函数 `frontend/src/composables/useResultPage.ts`，统一管理 `activeSection`、`activeDays`、`selectedPlaceKey`、`deepLinkVisible`、`exportStatus` 等页面状态。**验收标准**：页面状态集中管理；可被 `Result.vue` 直接消费；不包含复杂业务逻辑。
+- [x] T009 [P] 新建结果页组合式函数 `frontend/src/composables/useItineraryEditing.ts`，管理编辑模式、行程副本、拖拽排序、删除、插入与保存状态。**验收标准**：编辑逻辑从 `Result.vue` 中抽离；修改后状态可回写到持久化层；支持独立单测。
+- [x] T010 [P] 新建结果页组合式函数 `frontend/src/composables/useResultPage.ts`，统一管理 `activeSection`、`activeDays`、`selectedPlaceKey`、`deepLinkVisible`、`exportStatus` 等页面状态。**验收标准**：页面状态集中管理；可被 `Result.vue` 直接消费；不包含复杂业务逻辑。
 - [ ] T011 [P] 新建地图状态组合式函数 `frontend/src/composables/useMapState.ts`，管理标记、路线图层、当前选中地点、故事面板状态和地图失败 fallback。**验收标准**：地图联动逻辑从视图中抽离；支持按天切换；地图失败时可切换为文本优先展示。
 - [ ] T012 重构 `frontend/src/views/Result.vue`，接入 `useItineraryEditing`、`useResultPage`、`useMapState` 和 `itinerary-normalizer`，并优先复用现有页面结构与样式。**验收标准**：页面仍保留现有概览/预算/地图/日程/天气结构；结果页在不同数据结构下稳定显示；编辑状态、选中态与展开态不丢失。
 - [ ] T013 修改 `frontend/src/services/api.ts`，将旅行计划生成结果统一映射到标准化模型，并补充生成/流式生成接口的适配路径。**验收标准**：现有接口调用方式不被破坏；新旧结构都能被规范化处理；生成结果可直接进入结果页展示。
