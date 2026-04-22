@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vue-tsc && vite build",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:line-limit": "bash ../.specify/scripts/bash/check-file-line-limit.sh --mode staged"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",

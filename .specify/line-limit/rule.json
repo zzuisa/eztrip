@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "maxLines": 500,
+  "includePaths": [
+    ".specify/scripts/bash/*.sh",
+    "frontend/src/**/*.ts",
+    "frontend/src/**/*.vue",
+    "frontend/src/**/*.js",
+    "backend/app/**/*.py",
+    "start-dev.sh",
+    "stop-dev.sh"
+  ],
+  "excludePaths": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.git/**",
+    "**/.specify/**/test-fixtures/**",
+    "specs/**",
+    "logs/**"
+  ]
+}

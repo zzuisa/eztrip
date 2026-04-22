@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "maxLines": 500,
+  "includePaths": ["specs/002-enforce-file-line-limit/tests/.tmp-us2-rerun/*.txt"],
+  "excludePaths": []
+}

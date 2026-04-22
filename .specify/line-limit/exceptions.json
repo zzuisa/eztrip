@@ -1,0 +1,34 @@
+{
+  "exceptions": [
+    {
+      "filePath": "frontend/src/views/Result.vue",
+      "reason": "Legacy screen pending phased decomposition.",
+      "owner": "frontend-team",
+      "expiresAt": "2026-12-31T23:59:59Z"
+    },
+    {
+      "filePath": "backend/app/api/routes/travel_plan.py",
+      "reason": "Historical route module pending extraction.",
+      "owner": "backend-team",
+      "expiresAt": "2026-12-31T23:59:59Z"
+    },
+    {
+      "filePath": "frontend/src/views/Home.vue",
+      "reason": "Loading orchestration still in transition.",
+      "owner": "frontend-team",
+      "expiresAt": "2026-12-31T23:59:59Z"
+    },
+    {
+      "filePath": "frontend/src/composables/useMapState.ts",
+      "reason": "Newly extracted map state pending split.",
+      "owner": "frontend-team",
+      "expiresAt": "2026-12-31T23:59:59Z"
+    },
+    {
+      "filePath": ".specify/scripts/bash/update-agent-context.sh",
+      "reason": "Third-party Speckit upstream script.",
+      "owner": "platform-team",
+      "expiresAt": "2027-12-31T23:59:59Z"
+    }
+  ]
+}

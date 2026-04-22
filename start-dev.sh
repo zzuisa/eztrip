@@ -10,6 +10,12 @@ FRONTEND_LOG="${LOG_DIR}/frontend.log"
 
 mkdir -p "${LOG_DIR}"
 
+echo "[CHECK] file line limit rule"
+if ! bash "${ROOT_DIR}/.specify/scripts/bash/check-file-line-limit.sh" --mode changed; then
+  echo "[FAIL] line-limit check failed. please split over-limit files first."
+  exit 1
+fi
+
 start_backend() {
   nohup bash -lc "cd \"${BACKEND_DIR}\" && python -m uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8881" >>"${BACKEND_LOG}" 2>&1 &
 }

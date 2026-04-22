@@ -1,1 +1,3 @@
-{"feature_directory":"specs/001-smart-itinerary-optimization"}
+{
+  "feature_directory": "specs/002-enforce-file-line-limit"
+}

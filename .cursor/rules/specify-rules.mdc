@@ -6,9 +6,11 @@ alwaysApply: true
 
 # eztrip Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-16
+Auto-generated from all feature plans. Last updated: 2026-04-22
 
 ## Active Technologies
+- Bash（现有脚本体系）+ TypeScript（项目主开发语言） + 仓库现有 Shell 脚本体系、Node/NPM 脚本入口（不新增重型依赖） (20260421-enforce-file-line-limit)
+- 文件系统配置（规则文件、例外清单） (20260421-enforce-file-line-limit)
 
 - TypeScript + Vue 3 (Composition API) + Vue Router, Ant Design Vue, Pinia or existing store layer, Mapbox GL, html2canvas, jsPDF, Axios (001-smart-itinerary-optimization)
 
@@ -28,6 +30,7 @@ npm test && npm run lint
 TypeScript + Vue 3 (Composition API): Follow standard conventions
 
 ## Recent Changes
+- 20260421-enforce-file-line-limit: Added Bash（现有脚本体系）+ TypeScript（项目主开发语言） + 仓库现有 Shell 脚本体系、Node/NPM 脚本入口（不新增重型依赖）
 
 - 001-smart-itinerary-optimization: Added TypeScript + Vue 3 (Composition API) + Vue Router, Ant Design Vue, Pinia or existing store layer, Mapbox GL, html2canvas, jsPDF, Axios
 
