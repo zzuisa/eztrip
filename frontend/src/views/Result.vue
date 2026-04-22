@@ -71,7 +71,7 @@
           <!-- 左侧:行程概览和预算明细 -->
           <div class="left-info">
             <!-- 行程概览 -->
-            <a-card id="overview" :title="`${tripPlan.city}旅行计划`" :bordered="false" class="overview-card">
+            <a-card id="overview" :title="`${tripPlan.city} · RogueTrip旅行计划`" :bordered="false" class="overview-card">
               <div class="overview-content">
                 <div class="info-item">
                   <span class="info-label">📅 日期:</span>
@@ -89,24 +89,24 @@
               <div class="budget-grid">
                 <div class="budget-item">
                   <div class="budget-label">景点门票</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_attractions }}</div>
+                  <div class="budget-value">{{ formatCurrency(tripPlan.budget.total_attractions) }}</div>
                 </div>
                 <div class="budget-item">
                   <div class="budget-label">酒店住宿</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_hotels }}</div>
+                  <div class="budget-value">{{ formatCurrency(tripPlan.budget.total_hotels) }}</div>
                 </div>
                 <div class="budget-item">
                   <div class="budget-label">餐饮费用</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_meals }}</div>
+                  <div class="budget-value">{{ formatCurrency(tripPlan.budget.total_meals) }}</div>
                 </div>
                 <div class="budget-item">
                   <div class="budget-label">交通费用</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_transportation }}</div>
+                  <div class="budget-value">{{ formatCurrency(tripPlan.budget.total_transportation) }}</div>
                 </div>
               </div>
               <div class="budget-total">
                 <span class="total-label">预估总费用</span>
-                <span class="total-value">¥{{ tripPlan.budget.total }}</span>
+                <span class="total-value">{{ formatCurrency(tripPlan.budget.total) }}</span>
               </div>
             </a-card>
           </div>
@@ -115,7 +115,27 @@
           <div class="right-map">
             <a-card id="map" title="📍 景点地图" :bordered="false" class="map-card">
               <div class="map-wrap">
-                <div id="mapbox-container" style="width: 100%; height: 100%"></div>
+                <div id="mapbox-container" class="mapbox-container"></div>
+                <div class="map-story-panel" v-if="mapStory.visible">
+                  <div class="map-story-cards">
+                    <div class="story-card current" :style="{ opacity: 1 - mapStory.transitionProgress }">
+                      <img :src="mapStory.current.image" :alt="mapStory.current.name" class="story-image" @error="handleImageError" />
+                      <div class="story-content">
+                        <div class="story-title">{{ mapStory.current.name }}</div>
+                        <div class="story-desc">{{ mapStory.current.description || '推荐停留并打卡拍照。' }}</div>
+                        <div class="story-meta">{{ mapStory.current.address || '地址待补充' }}</div>
+                      </div>
+                    </div>
+                    <div v-if="mapStory.next" class="story-card next" :style="{ opacity: mapStory.transitionProgress }">
+                      <img :src="mapStory.next.image" :alt="mapStory.next.name" class="story-image" @error="handleImageError" />
+                      <div class="story-content">
+                        <div class="story-title">下一站：{{ mapStory.next.name }}</div>
+                        <div class="story-desc">{{ mapStory.next.description || '即将抵达下一处精彩景点。' }}</div>
+                        <div class="story-meta">{{ mapStory.next.address || '地址待补充' }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <div class="map-legend" v-if="tripPlan?.days?.length">
                   <div
                     v-for="(day, idx) in tripPlan.days"
@@ -141,7 +161,7 @@
             >
               <template #header>
                 <div class="day-header">
-                  <span class="day-title">第{{ day.day_index + 1 }}天</span>
+                  <span class="day-title">{{ day.display_title || `第${day.day_index + 1}天` }}</span>
                   <span class="day-date">{{ day.date }}</span>
                   <span class="day-meals-count">{{ getDayMealCount(day) }}</span>
                 </div>
@@ -152,6 +172,25 @@
                 <div class="info-row">
                   <span class="label">📝 行程描述:</span>
                   <span class="value">{{ day.description }}</span>
+                </div>
+                <div class="info-row reason-row">
+                  <span class="label">🧭 安排依据:</span>
+                  <div class="value reason-value">
+                    <ul class="reason-bullet-list">
+                      <li v-for="(bullet, bulletIdx) in getArrangementReasonBullets(day, index)" :key="`reason-${index}-${bulletIdx}`">
+                        {{ bullet }}
+                      </li>
+                    </ul>
+                    <a-button
+                      v-if="shouldShowReasonToggle(day)"
+                      type="link"
+                      size="small"
+                      class="reason-toggle"
+                      @click="toggleReasonExpanded(index)"
+                    >
+                      {{ reasonExpanded[index] ? '收起' : '展开' }}
+                    </a-button>
+                  </div>
                 </div>
                 <div class="info-row">
                   <span class="label">🚗 交通方式:</span>
@@ -203,7 +242,8 @@
                                   <span class="entry-title">{{ entry.title }}</span>
                                   <a-space wrap>
                                     <a-tag v-if="entry.kind === 'attraction'" color="gold">{{ formatPrice(entry.ticket_price) }}</a-tag>
-                                    <a-tag v-else color="blue">{{ getMealLabel(entry.mealType) }}</a-tag>
+                                    <a-tag v-if="entry.kind === 'attraction' && entry.preference_matched" color="magenta">偏好匹配</a-tag>
+                                    <a-tag v-if="entry.kind !== 'attraction'" color="blue">{{ getMealLabel(entry.mealType) }}</a-tag>
                                     <a-button size="small" type="primary" ghost @click.stop="openGoogleMapsNavigate(entry.title, entry.latitude, entry.longitude)">
                                       导航
                                     </a-button>
@@ -216,6 +256,9 @@
                                   <div><strong>停留:</strong> {{ entry.kind === 'attraction' ? getAttractionDuration(day, entry.title) : getMealDuration(entry.mealType) }}</div>
                                   <div><strong>位置:</strong> {{ entry.address || '未提供' }}</div>
                                   <div><strong>说明:</strong> {{ entry.description }}</div>
+                                  <div v-if="entry.kind === 'attraction' && entry.preference_reason">
+                                    <strong>偏好说明:</strong> {{ entry.preference_reason }}
+                                  </div>
                                   <div v-if="entry.route_desc"><strong>路线:</strong> {{ entry.route_desc }}</div>
                                 </div>
                               </div>
@@ -273,6 +316,10 @@
               </a-list>
             </a-collapse-panel>
           </a-collapse>
+        </a-card>
+
+        <a-card id="trip-poster" :bordered="false" class="poster-card">
+          <TripPosterGallery :story="posterStory" />
         </a-card>
 
         <a-card id="weather" v-if="tripPlan.weather_info && tripPlan.weather_info.length > 0" title="天气信息" style="margin-top: 20px" :bordered="false">
@@ -363,40 +410,268 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, onMounted, nextTick, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { DownOutlined } from '@ant-design/icons-vue'
 import mapboxgl from 'mapbox-gl'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import type { TripPlan } from '@/types'
+import { fetchTravelPlanResultById } from '@/services/api'
+import { buildPosterStory } from '@/services/poster-data-service'
+import TripPosterGallery from '@/components/poster/TripPosterGallery.vue'
+import { useItineraryEditing } from '@/composables/useItineraryEditing'
+import { useResultPage } from '@/composables/useResultPage'
 
 const router = useRouter()
+const route = useRoute()
 const tripPlan = ref<TripPlan | null>(null)
-const editMode = ref(false)
-const originalPlan = ref<TripPlan | null>(null)
 const attractionPhotos = ref<Record<string, string>>({})
-const activeSection = ref('overview')
-const activeDays = ref<number[]>([0]) // 默认展开第一天
+const {
+  activeSection,
+  activeDays,
+  selectedPlaceKey,
+  deepLinkVisible,
+  currentDeepLinkDayIndex,
+  deepLinkItems,
+} = useResultPage()
+activeDays.value = [0] // 默认展开第一天（与旧行为保持一致）
+
+const {
+  editMode,
+  toggleEditMode: startEditMode,
+  cancelEdit: cancelEditMode,
+  saveChanges: saveEdits,
+} = useItineraryEditing(tripPlan, { itineraryIdHint: String(route.params.id || '') })
 let map: any = null
 let popup: any = null
 const routeColors = ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96', '#13c2c2']
+const MAP_DEFAULT_ZOOM = 12
+const MAP_FOCUS_ZOOM = 15
+const MAP_MEAL_FOCUS_ZOOM = 15.5
+const MAP_STORY_ZOOM = 14.5
 let markerInstances: any[] = []
 let routeLayerIds: string[] = []
 let routeSourceIds: string[] = []
+const reasonExpanded = ref<Record<number, boolean>>({})
+const posterStory = computed(() => buildPosterStory({
+  city: tripPlan.value?.city || '',
+  days: tripPlan.value?.days || [],
+}))
+
+const getFirstSentence = (text: string): string => {
+  const normalized = String(text || '').trim()
+  if (!normalized) return ''
+  const parts = normalized.split(/[。！？.!?]/).map((part) => part.trim()).filter(Boolean)
+  return parts[0] || normalized
+}
+
+const simplifyTheme = (rawTitle: string): string => {
+  const normalized = String(rawTitle || '').replace(/第\d+天[｜|·:\-]?\s*/g, '').trim()
+  if (!normalized) return '区域串联'
+  return normalized.split(/[（(]/)[0].trim() || '区域串联'
+}
+
+const summarizeReason = (routeSummary: string): string => {
+  const firstSentence = getFirstSentence(routeSummary)
+  if (!firstSentence) return '区域串联与步行优化'
+  return firstSentence.length > 22 ? `${firstSentence.slice(0, 22)}...` : firstSentence
+}
+
+const buildDisplayTitle = (dayIndex: number, title: string, routeSummary: string): string => {
+  const theme = simplifyTheme(title)
+  const reason = summarizeReason(routeSummary)
+  return `第${dayIndex + 1}天｜${theme}（${reason}）`
+}
+
+const normalizeArrangementReason = (title: string, routeSummary: string): string => {
+  const summary = String(routeSummary || '').trim()
+  if (summary) return summary
+  const theme = simplifyTheme(title)
+  return `本日围绕${theme}安排，优先考虑景点连贯性与步行效率。`
+}
+
+const ensureArray = <T = any>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[]
+  if (value && typeof value === 'object') return Object.values(value as Record<string, T>)
+  return []
+}
+
+const normalizeLocation = (raw: any): { latitude: number; longitude: number } | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined
+  const latitude = Number(raw.latitude ?? raw.lat)
+  const longitude = Number(raw.longitude ?? raw.lng)
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    return { latitude, longitude }
+  }
+  return undefined
+}
+
+const normalizeMeals = (meals: unknown) => {
+  return ensureArray<any>(meals).map((meal) => ({
+    ...meal,
+    location: normalizeLocation(meal?.location ?? meal),
+  }))
+}
+
+const normalizeAttractions = (attractions: unknown) => {
+  return ensureArray<any>(attractions)
+    .map((attraction) => ({
+      ...attraction,
+      address: attraction?.address || attraction?.formatted_address || '',
+      description: attraction?.description || attraction?.editorial_summary || attraction?.route_desc || '',
+      location: normalizeLocation(attraction?.location ?? attraction),
+      ticket_price: attraction?.ticket_price ?? 0,
+    }))
+    .filter((attraction) => attraction?.name)
+}
+
+const normalizeActivities = (activities: unknown) => {
+  return ensureArray<any>(activities)
+    .map((activity) => ({
+      ...activity,
+      name: activity?.name || '',
+      time: activity?.time || '',
+      description: activity?.description || '',
+      route_desc: activity?.route_desc || '',
+      ticket_price: activity?.ticket_price ?? 0,
+      address: activity?.address || '',
+      latitude: activity?.latitude,
+      longitude: activity?.longitude,
+    }))
+    .filter((activity) => activity.name)
+}
+
+const normalizeTripPlan = (raw: unknown): TripPlan | null => {
+  if (!raw || typeof raw !== 'object') return null
+  const plan = raw as Record<string, any>
+  const rootAttractions = normalizeAttractions(plan.attractions)
+  const sourceDays = Array.isArray(plan.days) ? plan.days : plan.itinerary
+  const days = ensureArray(sourceDays).map((day: any, index: number) => {
+    const dayIndex = typeof day?.day_index === 'number' ? day.day_index : index
+    const title = String(day?.title || '')
+    const routeSummary = String(day?.route_summary || '')
+    const arrangementReason = normalizeArrangementReason(title, routeSummary)
+    return {
+      ...day,
+      day_index: dayIndex,
+      date: day?.date || `第${(day?.day ?? index + 1)}天`,
+      display_title: buildDisplayTitle(dayIndex, title, routeSummary),
+      arrangement_reason: arrangementReason,
+      description: day?.description || routeSummary || title || '',
+      transportation: day?.transportation || '公共交通',
+      accommodation: day?.accommodation || '',
+      activities: normalizeActivities(day?.activities),
+      attractions: normalizeAttractions(day?.attractions ?? day?.activities),
+      meals: normalizeMeals(day?.meals),
+    }
+  })
+
+  days.forEach((day, index) => {
+    if (day.attractions.length > 0) return
+    // 兼容 itinerary.activities 为文本/弱结构时，按景点名进行匹配
+    const activityText = ensureArray<any>(sourceDays[index]?.activities)
+      .map((activity: any) => [activity?.name, activity?.description, activity?.route_desc].filter(Boolean).join(' '))
+      .join(' ')
+    const matched = rootAttractions.filter((attraction) => activityText.includes(attraction.name))
+    if (matched.length > 0) {
+      day.attractions = matched
+      return
+    }
+    // 无法匹配时按天切片兜底，保证页面有可展示景点
+    const fallbackStart = index * 3
+    day.attractions = rootAttractions.slice(fallbackStart, fallbackStart + 3)
+  })
+
+  return {
+    ...(plan as TripPlan),
+    city: plan.city || plan.location || '',
+    start_date: plan.start_date || '待定',
+    end_date: plan.end_date || `${plan.days || days.length || 0}天行程`,
+    overall_suggestions:
+      plan.overall_suggestions ||
+      ensureArray<string>(plan.tips).join('；') ||
+      '',
+    budget: plan.budget || (plan.total_budget
+      ? {
+          total_attractions: plan.total_budget.tickets ?? 0,
+          total_hotels: plan.total_budget.hotels ?? 0,
+          total_meals: plan.total_budget.food ?? 0,
+          total_transportation: plan.total_budget.transport ?? 0,
+          total: plan.total_budget.total ?? 0,
+        }
+      : undefined),
+    budget_currency: plan?.total_budget?.currency || plan?.budget_currency || 'EUR',
+    days,
+  }
+}
+
+const shouldShowReasonToggle = (day: any): boolean => {
+  const reason = String(day?.arrangement_reason || '')
+  return reason.length > 80
+}
+
+const getDisplayedArrangementReason = (day: any, dayIndex: number): string => {
+  const reason = String(day?.arrangement_reason || '')
+  if (!reason) return '基于当天候选景点的空间连贯性与节奏平衡进行安排。'
+  if (reasonExpanded.value[dayIndex] || reason.length <= 80) return reason
+  return `${reason.slice(0, 80)}...`
+}
+
+const getArrangementReasonBullets = (day: any, dayIndex: number): string[] => {
+  const reasonText = getDisplayedArrangementReason(day, dayIndex)
+  const theme = simplifyTheme(String(day?.display_title || day?.title || ''))
+  const attractionCount = Array.isArray(day?.attractions) ? day.attractions.length : 0
+  const mealCount = Array.isArray(day?.meals) ? day.meals.length : 0
+  const rhythm = attractionCount >= 6 ? '高密度短停留' : attractionCount >= 4 ? '中等节奏' : '轻松节奏'
+
+  const preferenceHint = reasonText.includes('偏好')
+    ? '优先匹配你的偏好关键词与主题标签'
+    : reasonText.includes('citywalk') || reasonText.includes('城市漫步') || reasonText.includes('走马观花')
+      ? '优先按城市漫步方式串联可步行点位'
+      : '优先兼顾体验完整度与舒适度'
+
+  return [
+    `地理连贯性：围绕“${theme}”就近串联点位，减少来回折返。`,
+    `节奏控制：当天约 ${attractionCount} 个景点、${mealCount} 餐，采用${rhythm}安排。`,
+    `偏好匹配：${preferenceHint}。`,
+  ]
+}
+
+const toggleReasonExpanded = (dayIndex: number) => {
+  reasonExpanded.value = { ...reasonExpanded.value, [dayIndex]: !reasonExpanded.value[dayIndex] }
+}
 
 onMounted(async () => {
-  const data = sessionStorage.getItem('tripPlan')
-  if (data) {
-    tripPlan.value = JSON.parse(data)
-    rebuildDeepLinkItems()
-    // 加载景点图片
-    await loadAttractionPhotos()
-    // 等待DOM渲染完成后初始化地图
-    await nextTick()
-    initMap()
+  const resultId = String(route.params.id || '')
+  if (resultId && resultId !== 'fallback') {
+    try {
+      const resp = await fetchTravelPlanResultById(resultId)
+      if (resp.success && resp.data) {
+        tripPlan.value = normalizeTripPlan(resp.data)
+      }
+    } catch (error) {
+      console.error('按ID加载 tripPlan 失败:', error)
+      tripPlan.value = null
+    }
   }
+  if (!tripPlan.value) {
+    const data = sessionStorage.getItem('tripPlan') || sessionStorage.getItem('tripeplan')
+    if (data) {
+      try {
+        tripPlan.value = normalizeTripPlan(JSON.parse(data))
+      } catch (error) {
+        console.error('解析 tripPlan 失败:', error)
+        tripPlan.value = null
+      }
+    }
+  }
+  if (!tripPlan.value) return
+  rebuildDeepLinkItems()
+  await loadAttractionPhotos()
+  await nextTick()
+  initMap()
 })
 
 const goBack = () => {
@@ -414,18 +689,16 @@ const scrollToSection = ({ key }: { key: string }) => {
 
 // 切换编辑模式
 const toggleEditMode = () => {
-  editMode.value = true
-  // 保存原始数据用于取消编辑
-  originalPlan.value = JSON.parse(JSON.stringify(tripPlan.value))
+  startEditMode()
   message.info('进入编辑模式')
 }
 
 // 保存修改
 const saveChanges = () => {
-  editMode.value = false
-  // 更新sessionStorage
-  if (tripPlan.value) {
-    sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
+  const result = saveEdits()
+  if (!result.ok) {
+    message.error(result.error)
+    return
   }
   message.success('修改已保存')
 
@@ -440,40 +713,10 @@ const saveChanges = () => {
 
 // 取消编辑
 const cancelEdit = () => {
-  if (originalPlan.value) {
-    tripPlan.value = JSON.parse(JSON.stringify(originalPlan.value))
-  }
-  editMode.value = false
+  cancelEditMode()
   message.info('已取消编辑')
 }
 
-// 删除景点
-const deleteAttraction = (dayIndex: number, attrIndex: number) => {
-  if (!tripPlan.value) return
-
-  const day = tripPlan.value.days[dayIndex]
-  if (day.attractions.length <= 1) {
-    message.warning('每天至少需要保留一个景点')
-    return
-  }
-
-  day.attractions.splice(attrIndex, 1)
-  message.success('景点已删除')
-}
-
-// 移动景点顺序
-const moveAttraction = (dayIndex: number, attrIndex: number, direction: 'up' | 'down') => {
-  if (!tripPlan.value) return
-
-  const day = tripPlan.value.days[dayIndex]
-  const attractions = day.attractions
-
-  if (direction === 'up' && attrIndex > 0) {
-    [attractions[attrIndex], attractions[attrIndex - 1]] = [attractions[attrIndex - 1], attractions[attrIndex]]
-  } else if (direction === 'down' && attrIndex < attractions.length - 1) {
-    [attractions[attrIndex], attractions[attrIndex + 1]] = [attractions[attrIndex + 1], attractions[attrIndex]]
-  }
-}
 
 const getMealLabel = (type: string): string => {
   const labels: Record<string, string> = {
@@ -501,8 +744,22 @@ const getAttractionDuration = (day: any, name: string): string => {
 }
 
 const formatPrice = (value?: number): string => {
-  if (value === undefined || value === null) return '¥0'
-  return `¥${value}`
+  return formatCurrency(value)
+}
+
+const getCurrencySymbol = (): string => {
+  const currency = String((tripPlan.value as any)?.budget_currency || 'EUR').toUpperCase()
+  if (currency === 'EUR') return '€'
+  if (currency === 'USD') return '$'
+  if (currency === 'GBP') return '£'
+  if (currency === 'JPY') return '¥'
+  if (currency === 'CNY') return '¥'
+  return '€'
+}
+
+const formatCurrency = (value?: number): string => {
+  const amount = value === undefined || value === null ? 0 : value
+  return `${getCurrencySymbol()}${amount}`
 }
 
 const getDayMealCount = (day: any): string => {
@@ -510,8 +767,6 @@ const getDayMealCount = (day: any): string => {
   return `${count} 餐`
 }
 
-const deepLinkVisible = ref(false)
-const currentDeepLinkDayIndex = ref(0)
 const deepLinkDayOptions = ref<Array<{ label: string; value: number }>>([])
 
 const getTripDays = (): any[] => {
@@ -526,33 +781,37 @@ const rebuildDeepLinkDayOptions = () => {
 }
 
 const rebuildDeepLinkItems = () => {
+  deepLinkItems.value = buildDayDeepLinkItems(currentDeepLinkDayIndex.value)
+  rebuildDeepLinkDayOptions()
+}
+
+const buildDayDeepLinkItems = (dayIndex: number) => {
+  const day = getTripDays()[dayIndex]
+  if (!day) return []
   const items: Array<{ key: string; label: string; name: string; latitude?: number; longitude?: number; type: 'attraction' | 'meal'; address?: string }> = []
-  getTripDays().forEach((day: any, dayIndex: number) => {
-    ;(day.attractions || []).forEach((a: any, index: number) => {
-      items.push({
-        key: getPlaceKey(dayIndex, a.name, 'attraction'),
-        label: `第${dayIndex + 1}天 · 景点${index + 1}`,
-        name: a.name,
-        latitude: a.location?.latitude,
-        longitude: a.location?.longitude,
-        type: 'attraction',
-        address: a.address,
-      })
-    })
-    ;(day.meals || []).forEach((m: any) => {
-      items.push({
-        key: getPlaceKey(dayIndex, m.name, 'meal', m.type),
-        label: `第${dayIndex + 1}天 · ${getMealLabel(m.type)}`,
-        name: m.name,
-        latitude: m.location?.latitude,
-        longitude: m.location?.longitude,
-        type: 'meal',
-        address: m.address,
-      })
+  ;(day.attractions || []).forEach((a: any, index: number) => {
+    items.push({
+      key: getPlaceKey(dayIndex, a.name, 'attraction'),
+      label: `第${dayIndex + 1}天 · 景点${index + 1}`,
+      name: a.name,
+      latitude: a.location?.latitude,
+      longitude: a.location?.longitude,
+      type: 'attraction',
+      address: a.address,
     })
   })
-  deepLinkItems.value = items
-  rebuildDeepLinkDayOptions()
+  ;(day.meals || []).forEach((m: any) => {
+    items.push({
+      key: getPlaceKey(dayIndex, m.name, 'meal', m.type),
+      label: `第${dayIndex + 1}天 · ${getMealLabel(m.type)}`,
+      name: m.name,
+      latitude: m.location?.latitude,
+      longitude: m.location?.longitude,
+      type: 'meal',
+      address: m.address,
+    })
+  })
+  return items
 }
 
 const moveDeepLinkItem = (index: number, direction: 'up' | 'down') => {
@@ -565,7 +824,7 @@ const moveDeepLinkItem = (index: number, direction: 'up' | 'down') => {
 
 const openDeepLinkBuilder = () => {
   deepLinkVisible.value = true
-  if (deepLinkItems.value.length === 0) rebuildDeepLinkItems()
+  rebuildDeepLinkItems()
 }
 
 const addCurrentDayToDeepLink = (dayIndex: number) => {
@@ -573,16 +832,8 @@ const addCurrentDayToDeepLink = (dayIndex: number) => {
   deepLinkVisible.value = true
 }
 
-const openDeepLinkCollection = () => {
-  openGoogleMapsCollection()
-}
-
 const buildDeepLinkFromSelection = () => {
-  const days = getTripDays()
-  const day = days[currentDeepLinkDayIndex.value]
-  if (!day) return
-  deepLinkItems.value = []
-  addDayToDeepLink(currentDeepLinkDayIndex.value)
+  deepLinkItems.value = buildDayDeepLinkItems(currentDeepLinkDayIndex.value)
 }
 
 const copyDeepLinkUrl = async () => {
@@ -617,30 +868,20 @@ const removeDeepLinkItem = (index: number) => {
 }
 
 const addDayToDeepLink = (dayIndex: number) => {
-  const day = getTripDays()[dayIndex]
-  if (!day) return
-  const dayItems = [
-    ...(day.attractions || []).map((a: any, index: number) => ({
-      key: getPlaceKey(dayIndex, a.name, 'attraction'),
-      label: `第${dayIndex + 1}天 · 景点${index + 1}`,
-      name: a.name,
-      latitude: a.location?.latitude,
-      longitude: a.location?.longitude,
-      type: 'attraction' as const,
-      address: a.address,
-    })),
-    ...(day.meals || []).map((m: any) => ({
-      key: getPlaceKey(dayIndex, m.name, 'meal', m.type),
-      label: `第${dayIndex + 1}天 · ${getMealLabel(m.type)}`,
-      name: m.name,
-      latitude: m.location?.latitude,
-      longitude: m.location?.longitude,
-      type: 'meal' as const,
-      address: m.address,
-    })),
-  ]
-  deepLinkItems.value = [...deepLinkItems.value, ...dayItems]
+  deepLinkItems.value = buildDayDeepLinkItems(dayIndex)
 }
+
+watch(currentDeepLinkDayIndex, (dayIndex) => {
+  if (!deepLinkVisible.value) return
+  deepLinkItems.value = buildDayDeepLinkItems(dayIndex)
+})
+
+watch(activeDays, () => {
+  if (!map) return
+  window.setTimeout(() => {
+    startDayStoryAnimation(getActiveDayIndex())
+  }, 180)
+})
 
 const copyAddress = async (address?: string) => {
   if (!address) return message.warning('暂无地址可复制')
@@ -658,19 +899,383 @@ const getPlaceKey = (dayIndex: number, name: string, kind: 'attraction' | 'meal'
 
 const getAttractionCardId = (dayIndex: number, index: number) => `day-${dayIndex}-attraction-${index}`
 const getMealCardId = (dayIndex: number, mealType: string) => `day-${dayIndex}-meal-${mealType}`
-const selectedPlaceKey = ref('')
-const deepLinkItems = ref<Array<{ key: string; label: string; name: string; latitude?: number; longitude?: number; type: 'attraction' | 'meal'; address?: string }>>([])
+const mapStory = ref<{
+  visible: boolean
+  current: { name: string; description: string; address: string; image: string }
+  next: { name: string; description: string; address: string; image: string } | null
+  transitionProgress: number
+}>({
+  visible: false,
+  current: { name: '', description: '', address: '', image: '' },
+  next: null,
+  transitionProgress: 0,
+})
+let walkerMarker: any = null
+let walkerAnimationFrame: number | null = null
+let walkerPauseTimer: number | null = null
 
-const focusMapOn = (lng: number, lat: number, zoom = 14) => {
+const focusMapOn = (lng: number, lat: number, zoom = MAP_FOCUS_ZOOM) => {
   if (!map) return
+  if (map.isStyleLoaded()) {
+    map.resize()
+  }
   map.flyTo({ center: [lng, lat], zoom, essential: true })
+}
+
+const focusMapWithPageTransition = (lng: number, lat: number, zoom = MAP_FOCUS_ZOOM) => {
+  const mapElement = document.getElementById('map')
+  if (mapElement) {
+    mapElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  window.setTimeout(() => {
+    focusMapOn(lng, lat, zoom)
+  }, 420)
+}
+
+// 停止“小人导览动画”的所有异步任务（逐帧动画 + 定时停留）。
+const stopWalkerAnimation = () => {
+  // 如果当前存在 requestAnimationFrame 句柄，则取消它，避免重复渲染。
+  if (walkerAnimationFrame !== null) {
+    // 取消上一帧注册的动画回调。
+    cancelAnimationFrame(walkerAnimationFrame)
+    // 重置句柄，表示当前没有进行中的帧动画。
+    walkerAnimationFrame = null
+  }
+  // 如果当前存在“到站停留”的定时器，则清理它，避免串场。
+  if (walkerPauseTimer !== null) {
+    // 清理 setTimeout，防止旧回调在未来时刻触发。
+    window.clearTimeout(walkerPauseTimer)
+    // 重置定时器句柄。
+    walkerPauseTimer = null
+  }
+}
+
+// 删除地图上的小人 marker（切天、重播、销毁时会调用）。
+const removeWalkerMarker = () => {
+  // 容错处理：防止 marker.remove() 在异常场景抛错导致流程中断。
+  try {
+    // 如果 marker 存在，则从地图上移除。
+    if (walkerMarker) walkerMarker.remove()
+  } catch (_) {}
+  // 无论成功与否都清空引用，避免悬挂对象。
+  walkerMarker = null
+}
+
+// 创建一个新的小人 marker，并返回实例。
+const createWalkerMarker = () => {
+  // 没有地图实例时无法创建 marker，直接返回空。
+  if (!map) return null
+  // 创建 DOM 元素作为 marker 的视觉承载。
+  const markerEl = document.createElement('div')
+  // 绑定样式类，用于控制小人图标外观。
+  markerEl.className = 'walker-marker'
+  // 设置小人 emoji，可直观看到导览角色。
+  markerEl.textContent = '🚶'
+  // 使用 Mapbox Marker 创建地图标记，并将锚点放在底部更自然贴地。
+  walkerMarker = new mapboxgl.Marker({ element: markerEl, anchor: 'bottom' })
+  // 返回创建好的 marker 供后续 setLngLat/addTo 使用。
+  return walkerMarker
+}
+
+// 基于“当天时间轴条目”构造动画站点（包含景点 + 餐饮）。
+const getAnimatedStopsByDay = (dayIndex: number) => {
+  // 按索引取当天数据。
+  const day = getTripDays()[dayIndex]
+  // 如果当天不存在，返回空数组，外层会直接退出动画。
+  if (!day) return []
+  // 拉平当天时间槽位，得到按时段排序的条目数组。
+  const timelineEntries = getTimelineSlots(day).flatMap((slot: any) => slot.entries || [])
+  // 过滤掉没有经纬度的条目，并映射成动画所需统一结构。
+  return timelineEntries
+    // 仅保留可定位的条目（有 longitude/latitude）。
+    .filter((entry: any) => entry?.longitude !== undefined && entry?.latitude !== undefined)
+    // 把原始条目转换为动画站点对象。
+    .map((entry: any, idx: number) => {
+      // 判断当前条目是否为景点，用于选择图片来源。
+      const isAttraction = entry.kind === 'attraction'
+      // 景点使用真实/占位图；餐饮生成绿色餐饮 SVG 占位图。
+      const image = isAttraction
+        ? getAttractionImageByName(day, entry.title)
+        : `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">
+              <defs>
+                <linearGradient id="mealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style="stop-color:#34d399;stop-opacity:1" />
+                  <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
+                </linearGradient>
+              </defs>
+              <rect width="400" height="300" fill="url(#mealGrad)"/>
+              <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="42" fill="white">🍽️</text>
+              <text x="50%" y="62%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="22" fill="white">${entry.title || `餐饮${idx + 1}`}</text>
+            </svg>`
+          )))}`
+      // 返回统一站点结构：名称、文案、地址、坐标、图片。
+      return {
+        // 标题优先用条目标题，没有则兜底“站点X”。
+        name: entry.title || `站点${idx + 1}`,
+        // 描述优先 description，再回退 route_desc。
+        description: entry.description || entry.route_desc || '',
+        // 地址字段兜底为空串，避免模板显示 undefined。
+        address: entry.address || '',
+        // 经度。
+        lng: entry.longitude,
+        // 纬度。
+        lat: entry.latitude,
+        // 当前站点展示图。
+        image,
+      }
+    })
+}
+
+// 将折叠面板 activeKey 统一解析成“当前天索引”。
+const getActiveDayIndex = (): number => {
+  // 读取 collapse 的 active key（可能是数组/数字/字符串）。
+  const value = activeDays.value as any
+  // 如果是数组（常见场景），取第一个 active key。
+  if (Array.isArray(value)) {
+    // 取第一个元素作为当前天。
+    const first = value[0]
+    // 如果本来就是数字直接返回，否则强转数字并兜底 0。
+    return typeof first === 'number' ? first : Number(first || 0)
+  }
+  // 如果是数字直接返回。
+  if (typeof value === 'number') return value
+  // 如果是字符串，转数字并兜底 0。
+  if (typeof value === 'string') return Number(value || 0)
+  // 兜底返回第 0 天。
+  return 0
+}
+
+// 启动某一天的地图故事动画（会自动循环）。
+const startDayStoryAnimation = (dayIndex: number) => {
+  // 无地图实例则无法播放动画。
+  if (!map) return
+  // 开始前先停止旧动画，避免双实例并行。
+  stopWalkerAnimation()
+  // 开始前移除旧小人 marker，确保只有一个角色在地图上。
+  removeWalkerMarker()
+  // 取当天可播放站点。
+  const stops = getAnimatedStopsByDay(dayIndex)
+  // 无站点时隐藏故事卡片并退出。
+  if (stops.length === 0) {
+    // 关闭左上角故事卡片。
+    mapStory.value.visible = false
+    // 结束函数。
+    return
+  }
+
+  // 创建小人 marker。
+  const marker = createWalkerMarker()
+  // 创建失败（极端情况）则退出。
+  if (!marker) return
+  // 小人放到第一站，并挂到地图上。
+  marker.setLngLat([stops[0].lng, stops[0].lat]).addTo(map)
+
+  // 打开故事卡片层。
+  mapStory.value.visible = true
+  // 设置当前卡片为第一站。
+  mapStory.value.current = {
+    // 当前站标题。
+    name: stops[0].name,
+    // 当前站描述。
+    description: stops[0].description,
+    // 当前站地址。
+    address: stops[0].address,
+    // 当前站图片。
+    image: stops[0].image,
+  }
+  // 如果存在第二站，则先作为“下一站”预告卡片。
+  mapStory.value.next = stops[1]
+    ? {
+        // 下一站标题。
+        name: stops[1].name,
+        // 下一站描述。
+        description: stops[1].description,
+        // 下一站地址。
+        address: stops[1].address,
+        // 下一站图片。
+        image: stops[1].image,
+      }
+    // 没有下一站则置空。
+    : null
+  // 初始化卡片过渡进度为 0（仅显示当前卡片）。
+  mapStory.value.transitionProgress = 0
+
+  // 开场先飞到第一站，给用户一个明确起点。
+  map.flyTo({ center: [stops[0].lng, stops[0].lat], zoom: MAP_STORY_ZOOM, essential: true })
+  // 如果只有一个站点，无需段动画，停在当前即可。
+  if (stops.length === 1) return
+
+  // 全部站点走完后，循环前的短停留时长（毫秒）。
+  const loopPauseDuration = 900
+  // 缓动函数：前后慢、中间快，移动更自然。
+  const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
+  // 计算两点球面距离（公里），用于动态速度控制。
+  const calcDistanceKm = (from: { lng: number; lat: number }, to: { lng: number; lat: number }) => {
+    // 角度转弧度函数。
+    const toRad = (v: number) => (v * Math.PI) / 180
+    // 地球半径（km）。
+    const earthRadiusKm = 6371
+    // 纬度差（弧度）。
+    const dLat = toRad(to.lat - from.lat)
+    // 经度差（弧度）。
+    const dLng = toRad(to.lng - from.lng)
+    // Haversine 公式中间值 a。
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(from.lat)) * Math.cos(toRad(to.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2)
+    // Haversine 公式中间值 c。
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    // 返回球面距离（km）。
+    return earthRadiusKm * c
+  }
+  // 根据两点距离计算“移动时长”（ms）：近距不闪，远距不拖。
+  const calcSegmentDuration = (from: { lng: number; lat: number }, to: { lng: number; lat: number }) => {
+    // 先算公里距离。
+    const distanceKm = calcDistanceKm(from, to)
+    // 次线性增长，防止远距离时长爆炸。
+    const dynamic = 2400 + Math.sqrt(distanceKm + 0.02) * 2100
+    // 限制在 [2600, 5600] 区间。
+    return Math.min(5600, Math.max(2600, dynamic))
+  }
+  // 根据两点距离计算“到站停留时长”（ms）：确保读卡片有时间。
+  const calcStopDuration = (from: { lng: number; lat: number }, to: { lng: number; lat: number }) => {
+    // 先算公里距离。
+    const distanceKm = calcDistanceKm(from, to)
+    // 次线性增长，远距离适度多停留。
+    const dynamic = 1200 + Math.sqrt(distanceKm + 0.02) * 700
+    // 限制在 [1100, 2300] 区间。
+    return Math.min(2300, Math.max(1100, dynamic))
+  }
+
+  // 播放某一段（from -> to）的移动动画。
+  const runSegment = (segmentIndex: number) => {
+    // 当前段起点站。
+    const from = stops[segmentIndex]
+    // 当前段终点站。
+    const to = stops[segmentIndex + 1]
+    // 若段数据不完整，则清空“下一站”状态并结束。
+    if (!from || !to) {
+      // 过渡进度归零。
+      mapStory.value.transitionProgress = 0
+      // 下一站清空。
+      mapStory.value.next = null
+      // 退出当前段。
+      return
+    }
+    // 计算本段移动时长。
+    const segmentDuration = calcSegmentDuration(from, to)
+    // 计算到站后停留时长。
+    const stopDuration = calcStopDuration(from, to)
+    // 记录本段开始时间戳。
+    const startTime = performance.now()
+
+    // 每一帧回调：计算当前进度并更新小人位置/镜头/卡片过渡。
+    const tick = (now: number) => {
+      // 线性进度，范围 [0,1]。
+      const rawProgress = Math.min((now - startTime) / segmentDuration, 1)
+      // 应用缓动后的进度，移动更平滑。
+      const eased = easeInOut(rawProgress)
+      // 插值得到当前经度。
+      const lng = from.lng + (to.lng - from.lng) * eased
+      // 插值得到当前纬度。
+      const lat = from.lat + (to.lat - from.lat) * eased
+      // 更新小人 marker 到当前坐标。
+      marker.setLngLat([lng, lat])
+      // 移动过程中镜头持续跟随小人。
+      map.easeTo({
+        // 跟随中心点。
+        center: [lng, lat],
+        // 跟随缩放等级。
+        zoom: MAP_STORY_ZOOM,
+        // 每次小步跟随的动画时长。
+        duration: 180,
+        // 线性 easing，避免镜头二次变速。
+        easing: (v: number) => v,
+        // 声明此动画为关键动画。
+        essential: true,
+      })
+
+      // 小人离站后即展示下一站：这里 0~0.25 迅速将过渡推到 1。
+      mapStory.value.transitionProgress = Math.min(rawProgress / 0.25, 1)
+
+      // 若还没到终点，继续请求下一帧。
+      if (rawProgress < 1) {
+        // 存储 rAF 句柄，方便外部随时停止。
+        walkerAnimationFrame = requestAnimationFrame(tick)
+        // 本帧结束。
+        return
+      }
+
+      // 到站时把“下一站卡片”保持为完整可见，避免突兀切换。
+      mapStory.value.transitionProgress = 1
+      // 预取“未来站点”（下一段的终点），用于更新 next 卡片。
+      const future = stops[segmentIndex + 2]
+      // 到站后先短暂停顿，再执行卡片切换。
+      walkerPauseTimer = window.setTimeout(() => {
+        // 定时器触发后先清空句柄。
+        walkerPauseTimer = null
+        // 把当前卡片切换为刚到达的 to 站。
+        mapStory.value.current = {
+          // 新当前站标题。
+          name: to.name,
+          // 新当前站描述。
+          description: to.description,
+          // 新当前站地址。
+          address: to.address,
+          // 新当前站图片。
+          image: to.image,
+        }
+        // 更新下一站卡片（如果 future 存在）。
+        mapStory.value.next = future
+          ? {
+              // future 标题。
+              name: future.name,
+              // future 描述。
+              description: future.description,
+              // future 地址。
+              address: future.address,
+              // future 图片。
+              image: future.image,
+            }
+          // 没有 future 时置空。
+          : null
+        // 当前段切换完成后，过渡进度重置。
+        mapStory.value.transitionProgress = 0
+
+        // 如果后面还有段，则按停留时长后播放下一段。
+        if (segmentIndex + 1 < stops.length - 1) {
+          // 创建下一段启动定时器。
+          walkerPauseTimer = window.setTimeout(() => {
+            // 触发后清空句柄。
+            walkerPauseTimer = null
+            // 递归播放下一段。
+            runSegment(segmentIndex + 1)
+          }, stopDuration)
+        } else {
+          // 末站处理：短暂停留后从第一站重播，实现循环。
+          walkerPauseTimer = window.setTimeout(() => {
+            // 触发后清空句柄。
+            walkerPauseTimer = null
+            // 从 dayIndex 重新启动整天动画。
+            startDayStoryAnimation(dayIndex)
+          }, loopPauseDuration)
+        }
+      }, 700)
+    }
+
+    // 启动当前段第一帧。
+    walkerAnimationFrame = requestAnimationFrame(tick)
+  }
+
+  // 从第 0 段开始播放整天路线。
+  runSegment(0)
 }
 
 const focusPlace = (entry: any) => {
   selectedPlaceKey.value = entry.key
-  scrollCardIntoView(entry.cardId)
   if (entry.longitude && entry.latitude) {
-    focusMapOn(entry.longitude, entry.latitude, entry.kind === 'meal' ? 15 : 14)
+    focusMapWithPageTransition(entry.longitude, entry.latitude, entry.kind === 'meal' ? MAP_MEAL_FOCUS_ZOOM : MAP_FOCUS_ZOOM)
   }
 }
 
@@ -687,9 +1292,8 @@ const focusAttraction = (dayIndex: number, index: number) => {
 
 const focusMeal = (dayIndex: number, meal: any) => {
   selectedPlaceKey.value = getPlaceKey(dayIndex, meal.name, 'meal', meal.type)
-  scrollCardIntoView(getMealCardId(dayIndex, meal.type))
   if (meal.location?.longitude && meal.location?.latitude) {
-    focusMapOn(meal.location.longitude, meal.location.latitude, 15)
+    focusMapWithPageTransition(meal.location.longitude, meal.location.latitude, MAP_MEAL_FOCUS_ZOOM)
   }
 }
 
@@ -722,6 +1326,7 @@ const scrollCardIntoView = (id: string) => {
 const getTimelineSlots = (day: any) => {
   const attractions = day.attractions || []
   const meals = day.meals || []
+  const activities = ensureArray<any>(day.activities)
   const slots = [
     { key: 'morning', label: '上午', entries: [] as any[] },
     { key: 'noon', label: '中午', entries: [] as any[] },
@@ -729,71 +1334,76 @@ const getTimelineSlots = (day: any) => {
     { key: 'evening', label: '晚上', entries: [] as any[] },
   ]
 
-  attractions.slice(0, 1).forEach((a, idx) => slots[0].entries.push({
-    key: getPlaceKey(day.day_index, a.name, 'attraction'),
-    kind: 'attraction',
-    title: a.name,
-    time: `09:${String(idx * 30).padStart(2, '0')}`,
-    address: a.address,
-    description: a.description,
-    route_desc: a.description,
-    ticket_price: a.ticket_price,
-    latitude: a.location?.latitude,
-    longitude: a.location?.longitude,
-    cardId: getAttractionCardId(day.day_index, idx),
-  }))
-  meals.filter((m: any) => m.type === 'breakfast').forEach((m: any) => slots[0].entries.push({
-    key: getPlaceKey(day.day_index, m.name, 'meal', m.type),
-    kind: 'meal',
-    mealType: m.type,
-    title: `${getMealLabel(m.type)} · ${m.name}`,
-    time: m.time,
-    address: m.address,
-    description: m.description,
-    route_desc: m.route_desc,
-    latitude: m.location?.latitude,
-    longitude: m.location?.longitude,
-    cardId: getMealCardId(day.day_index, m.type),
-  }))
-  meals.filter((m: any) => m.type === 'lunch').forEach((m: any) => slots[1].entries.push({
-    key: getPlaceKey(day.day_index, m.name, 'meal', m.type),
-    kind: 'meal',
-    mealType: m.type,
-    title: `${getMealLabel(m.type)} · ${m.name}`,
-    time: m.time,
-    address: m.address,
-    description: m.description,
-    route_desc: m.route_desc,
-    latitude: m.location?.latitude,
-    longitude: m.location?.longitude,
-    cardId: getMealCardId(day.day_index, m.type),
-  }))
-  attractions.slice(1, 3).forEach((a, idx) => slots[2].entries.push({
-    key: getPlaceKey(day.day_index, a.name, 'attraction'),
-    kind: 'attraction',
-    title: a.name,
-    time: `14:${String(idx * 30).padStart(2, '0')}`,
-    address: a.address,
-    description: a.description,
-    route_desc: a.description,
-    ticket_price: a.ticket_price,
-    latitude: a.location?.latitude,
-    longitude: a.location?.longitude,
-    cardId: getAttractionCardId(day.day_index, idx + 1),
-  }))
-  meals.filter((m: any) => m.type === 'dinner' || m.type === 'snack').forEach((m: any) => slots[3].entries.push({
-    key: getPlaceKey(day.day_index, m.name, 'meal', m.type),
-    kind: 'meal',
-    mealType: m.type,
-    title: `${getMealLabel(m.type)} · ${m.name}`,
-    time: m.time,
-    address: m.address,
-    description: m.description,
-    route_desc: m.route_desc,
-    latitude: m.location?.latitude,
-    longitude: m.location?.longitude,
-    cardId: getMealCardId(day.day_index, m.type),
-  }))
+  const parseStartHour = (timeText: string): number => {
+    const text = String(timeText || '').trim()
+    if (!text) return 14
+    const start = text.split('-')[0]?.trim() || text
+    const match = start.match(/(\d{1,2}):(\d{2})/)
+    if (!match) return 14
+    return Number(match[1])
+  }
+
+  const getSlotIndexByHour = (hour: number): number => {
+    if (hour < 11) return 0
+    if (hour < 14) return 1
+    if (hour < 18) return 2
+    return 3
+  }
+
+  const getMealSlotIndex = (mealType: string, mealTime?: string): number => {
+    if (mealType === 'breakfast') return 0
+    if (mealType === 'lunch') return 1
+    if (mealType === 'dinner') return 3
+    const hour = parseStartHour(String(mealTime || ''))
+    return getSlotIndexByHour(hour)
+  }
+
+  const attractionIndexMap = new Map<string, number>()
+  attractions.forEach((item: any, idx: number) => attractionIndexMap.set(String(item.name || ''), idx))
+
+  activities
+    .map((activity: any, idx: number) => ({ activity, idx, hour: parseStartHour(String(activity?.time || '')) }))
+    .sort((a, b) => a.hour - b.hour || a.idx - b.idx)
+    .forEach(({ activity }) => {
+      const slotIndex = getSlotIndexByHour(parseStartHour(String(activity?.time || '')))
+      const attraction = attractions.find((a: any) => a.name === activity.name)
+      const attractionCardIndex = attractionIndexMap.get(String(activity.name || '')) ?? 0
+      slots[slotIndex].entries.push({
+        key: getPlaceKey(day.day_index, activity.name, 'attraction'),
+        kind: 'attraction',
+        title: activity.name,
+        time: activity.time || '',
+        address: activity.address || attraction?.address || '',
+        description: activity.description || attraction?.description || '',
+        route_desc: activity.route_desc || attraction?.description || '',
+        ticket_price: activity.ticket_price ?? attraction?.ticket_price ?? 0,
+        preference_matched: Boolean(activity.preference_matched),
+        preference_reason: String(activity.preference_reason || ''),
+        latitude: activity.latitude ?? attraction?.location?.latitude,
+        longitude: activity.longitude ?? attraction?.location?.longitude,
+        cardId: getAttractionCardId(day.day_index, attractionCardIndex),
+      })
+    })
+
+  meals
+    .map((meal: any, idx: number) => ({ meal, idx, hour: parseStartHour(String(meal?.time || '')) }))
+    .sort((a: { hour: number; idx: number }, b: { hour: number; idx: number }) => a.hour - b.hour || a.idx - b.idx)
+    .forEach(({ meal }: { meal: any }) => {
+      const slotIndex = getMealSlotIndex(String(meal?.type || ''), String(meal?.time || ''))
+      slots[slotIndex].entries.push({
+        key: getPlaceKey(day.day_index, meal.name, 'meal', meal.type),
+        kind: 'meal',
+        mealType: meal.type,
+        title: `${getMealLabel(meal.type)} · ${meal.name}`,
+        time: meal.time || '',
+        address: meal.address,
+        description: meal.description,
+        route_desc: meal.route_desc,
+        latitude: meal.location?.latitude,
+        longitude: meal.location?.longitude,
+        cardId: getMealCardId(day.day_index, meal.type),
+      })
+    })
   return slots
 }
 
@@ -811,8 +1421,8 @@ const loadAttractionPhotos = async () => {
 
   const promises: Promise<void>[] = []
 
-  tripPlan.value.days.forEach(day => {
-    day.attractions.forEach(attraction => {
+  getTripDays().forEach((day: any) => {
+    ;(day.attractions || []).forEach((attraction: any) => {
       // 优先使用 travel-plan 返回的真实 photo_references/image_url
       if (attraction.image_url) {
         attractionPhotos.value[attraction.name] = attraction.image_url
@@ -1192,16 +1802,35 @@ const initMap = async () => {
     }
     mapboxgl.accessToken = token
 
+    const container = document.getElementById('mapbox-container')
+    if (!container) {
+      message.error('地图容器未找到')
+      return
+    }
+
+    if (map) {
+      try { map.remove() } catch (_) {}
+      map = null
+    }
+
     map = new mapboxgl.Map({
       container: 'mapbox-container',
       style: 'mapbox://styles/mapbox/streets-v12',
       center: [116.397128, 39.916527],
-      zoom: 11
+      zoom: MAP_DEFAULT_ZOOM
     })
 
     map.on('load', () => {
+      map?.resize()
       addAttractionMarkers()
     })
+
+    window.setTimeout(() => {
+      map?.resize()
+    }, 120)
+    window.setTimeout(() => {
+      map?.resize()
+    }, 420)
 
     message.success('地图加载成功')
   } catch (error) {
@@ -1211,6 +1840,9 @@ const initMap = async () => {
 }
 
 const clearMapOverlays = () => {
+  stopWalkerAnimation()
+  removeWalkerMarker()
+  mapStory.value.visible = false
   markerInstances.forEach((m) => {
     try { m.remove() } catch (_) {}
   })
@@ -1237,6 +1869,7 @@ const addAttractionMarkers = () => {
 
   const markerBounds = new mapboxgl.LngLatBounds()
   const allAttractions: any[] = []
+  const allMeals: any[] = []
 
   // 收集所有景点
   tripPlan.value.days.forEach((day, dayIndex) => {
@@ -1246,6 +1879,14 @@ const addAttractionMarkers = () => {
           ...attraction,
           dayIndex,
           attrIndex
+        })
+      }
+    })
+    ;(day.meals || []).forEach((meal) => {
+      if (meal.location && meal.location.longitude && meal.location.latitude) {
+        allMeals.push({
+          ...meal,
+          dayIndex,
         })
       }
     })
@@ -1300,36 +1941,85 @@ const addAttractionMarkers = () => {
     })
   })
 
+  // 创建餐饮标记（早餐/午餐/晚餐使用不同图案）
+  allMeals.forEach((meal) => {
+    const markerEl = document.createElement('div')
+    const dayColor = routeColors[meal.dayIndex % routeColors.length]
+    markerEl.style.background = '#ffffff'
+    markerEl.style.color = dayColor
+    markerEl.style.width = '26px'
+    markerEl.style.height = '26px'
+    markerEl.style.display = 'inline-flex'
+    markerEl.style.alignItems = 'center'
+    markerEl.style.justifyContent = 'center'
+    markerEl.style.borderRadius = '8px'
+    markerEl.style.fontSize = '11px'
+    markerEl.style.fontWeight = '700'
+    markerEl.style.cursor = 'pointer'
+    markerEl.style.border = `2px solid ${dayColor}`
+    markerEl.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)'
+
+    const mealMarkerMap: Record<string, string> = {
+      breakfast: 'B',
+      lunch: 'L',
+      dinner: 'D',
+      snack: 'S',
+    }
+    markerEl.textContent = mealMarkerMap[meal.type] || 'M'
+
+    const lngLat: [number, number] = [meal.location.longitude, meal.location.latitude]
+    const marker = new mapboxgl.Marker({ element: markerEl, anchor: 'center' })
+      .setLngLat(lngLat)
+      .addTo(map)
+    markerInstances.push(marker)
+    markerBounds.extend(lngLat)
+
+    const html = `
+      <div style="padding: 8px; min-width: 220px;">
+        <h4 style="margin: 0 0 8px 0;">${meal.name}</h4>
+        <p style="margin: 4px 0;"><strong>类型:</strong> ${getMealLabel(meal.type)}</p>
+        <p style="margin: 4px 0;"><strong>时间:</strong> ${meal.time || '待定'}</p>
+        <p style="margin: 4px 0;"><strong>地址:</strong> ${meal.address || '暂无'}</p>
+        <p style="margin: 4px 0;"><strong>描述:</strong> ${meal.description || '暂无描述'}</p>
+        <p style="margin: 4px 0; color: #1890ff;"><strong>第${meal.dayIndex + 1}天</strong></p>
+      </div>
+    `
+    const markerPopup = new mapboxgl.Popup({ offset: 24 }).setHTML(html)
+    marker.setPopup(markerPopup)
+    markerEl.addEventListener('click', () => {
+      if (popup && popup !== markerPopup) popup.remove()
+      popup = markerPopup
+      selectedPlaceKey.value = getPlaceKey(meal.dayIndex, meal.name, 'meal', meal.type)
+      marker.togglePopup()
+      focusMeal(meal.dayIndex, meal)
+    })
+  })
+
   if (allAttractions.length > 0) {
     map.fitBounds(markerBounds, { padding: 40 })
   }
 
-  drawRoutes(allAttractions)
+  drawRoutes()
+  window.setTimeout(() => {
+    startDayStoryAnimation(getActiveDayIndex())
+  }, 280)
 }
 
 // 绘制路线
-const drawRoutes = (attractions: any[]) => {
-  if (attractions.length < 2) return
+const drawRoutes = () => {
+  if (!tripPlan.value) return
 
-  // 按天分组绘制路线
-  const dayGroups: any = {}
-  attractions.forEach(attr => {
-    if (!dayGroups[attr.dayIndex]) {
-      dayGroups[attr.dayIndex] = []
-    }
-    dayGroups[attr.dayIndex].push(attr)
-  })
+  tripPlan.value.days.forEach((day, dayIndex) => {
+    const timelineEntries = getTimelineSlots(day).flatMap((slot: any) => slot.entries || [])
+    const coordinates = timelineEntries
+      .filter((entry: any) => entry.longitude !== undefined && entry.latitude !== undefined)
+      .map((entry: any) => [entry.longitude, entry.latitude] as [number, number])
 
-  Object.entries(dayGroups).forEach(([dayIndex, dayAttractions]: any) => {
-    if (dayAttractions.length < 2) return
-
-    // 严格按“当天行程顺序”连线，避免与推荐顺序不一致
-    dayAttractions.sort((a: any, b: any) => a.attrIndex - b.attrIndex)
+    if (coordinates.length < 2) return
 
     const sourceId = `route-source-${dayIndex}`
     const layerId = `route-layer-${dayIndex}`
-    const coordinates = dayAttractions.map((attr: any) => [attr.location.longitude, attr.location.latitude])
-    const dayColor = routeColors[Number(dayIndex) % routeColors.length]
+    const dayColor = routeColors[dayIndex % routeColors.length]
 
     if (map.getLayer(layerId)) map.removeLayer(layerId)
     if (map.getSource(sourceId)) map.removeSource(sourceId)
@@ -1369,30 +2059,23 @@ const drawRoutes = (attractions: any[]) => {
 <style scoped>
 .result-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-  padding: 40px 20px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  padding: 18px;
 }
 
 .page-header {
-  max-width: 1200px;
-  margin: 0 auto 30px;
   display: flex;
+  gap: 12px;
   justify-content: space-between;
   align-items: center;
-  animation: fadeInDown 0.6s ease-out;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
 }
 
-.back-button {
-  border-radius: 8px;
-  font-weight: 500;
-}
-
-/* 内容布局 */
 .content-wrapper {
-  max-width: 1400px;
-  margin: 0 auto;
   display: flex;
-  gap: 24px;
+  gap: 16px;
+  align-items: flex-start;
 }
 
 .side-nav {
@@ -1400,106 +2083,104 @@ const drawRoutes = (attractions: any[]) => {
   flex-shrink: 0;
 }
 
-.mobile-only {
-  display: none;
-}
-
-.mobile-nav-bar {
-  display: none;
-}
-
-.mobile-action-strip {
-  display: none;
-}
-
-.deep-link-panel {
-  margin-top: 14px;
-}
-
-.deep-link-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.deep-link-item {
-  border: 1px solid #e8e8e8;
-  border-radius: 12px;
-  padding: 12px;
-  background: #fff;
-}
-
-.deep-link-item-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: flex-start;
-  margin-bottom: 8px;
-}
-
-.deep-link-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.side-nav :deep(.ant-menu) {
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  background: white;
-}
-
-.side-nav :deep(.ant-menu-item) {
-  margin: 4px 8px;
-  border-radius: 8px;
-  transition: all 0.3s ease;
-}
-
-.side-nav :deep(.ant-menu-item-selected) {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-}
-
-.side-nav :deep(.ant-menu-item:hover) {
-  background: rgba(102, 126, 234, 0.1);
-}
-
 .main-content {
   flex: 1;
   min-width: 0;
 }
 
-/* 景点图片样式 */
-.attraction-image-wrapper {
+.poster-card {
+  margin-top: 16px;
+}
+
+.top-info-section {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.left-info {
+  flex: 0 0 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.right-map {
+  flex: 1;
+  min-width: 0;
+}
+
+.map-card,
+.map-wrap,
+.mapbox-container {
+  width: 100%;
+}
+
+.map-card {
+  min-height: 520px;
+}
+
+.map-wrap {
   position: relative;
-  margin-bottom: 12px;
-  border-radius: 8px;
+  min-height: 460px;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.mapbox-container {
+  min-height: 460px;
+}
+
+.map-story-panel {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 3;
+  width: min(360px, calc(100% - 24px));
+}
+
+.map-story-cards {
+  position: relative;
+  min-height: 120px;
+}
+
+.story-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
   overflow: hidden;
 }
 
-.attraction-image {
-  width: 100%;
-  height: 200px;
+.story-image {
+  width: 92px;
+  height: 92px;
+  flex: 0 0 92px;
+  border-radius: 10px;
   object-fit: cover;
-  transition: transform 0.3s ease;
+  background: #e5e7eb;
 }
 
-.attraction-image-wrapper:hover .attraction-image {
-  transform: scale(1.05);
+.story-content {
+  min-width: 0;
 }
 
-.timeline-card-group {
-  margin-bottom: 12px;
+.story-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: #111827;
 }
 
-.compact-slot-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.compact-entry-card {
-  cursor: pointer;
+.story-desc,
+.story-meta {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #4b5563;
+  margin-top: 4px;
 }
 
 .entry-layout {
@@ -1509,568 +2190,111 @@ const drawRoutes = (attractions: any[]) => {
 }
 
 .entry-image-wrap {
+  width: 168px;
+  height: 112px;
+  flex: 0 0 168px;
   position: relative;
-  width: 120px;
-  flex-shrink: 0;
-  border-radius: 12px;
   overflow: hidden;
+  border-radius: 12px;
+  background: #e5e7eb;
 }
 
 .entry-image {
-  width: 120px;
-  height: 88px;
-  object-fit: cover;
+  width: 100%;
+  height: 100%;
   display: block;
-}
-
-.entry-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.entry-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.entry-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #1f2937;
-}
-
-.entry-meta {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
-  color: #4b5563;
-}
-
-.timeline-empty {
-  color: #999;
-  padding: 12px 4px;
-}
-
-.meal-card, .attraction-card {
-  cursor: pointer;
-}
-
-.attraction-card-active, .meal-card-active, .timeline-card-active {
-  border: 1px solid #667eea !important;
-  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
-}
-
-.price-tag-badge {
-  font-size: 12px;
-}
-
-.attraction-badge {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.badge-number {
-  font-size: 18px;
+  object-fit: cover;
 }
 
 .price-tag {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  background: rgba(255, 77, 79, 0.9);
-  color: white;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-weight: bold;
-  font-size: 14px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  right: 8px;
+  top: 8px;
 }
 
-.quick-meta {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.meal-meta {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-/* 天气卡片样式 */
-.weather-card {
-  background: linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%);
-  border: none !important;
-  transition: all 0.3s ease;
-}
-
-.weather-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
-}
-
-.weather-date {
-  font-size: 16px;
-  font-weight: bold;
-  color: #00796b;
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.weather-info-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.weather-icon {
-  font-size: 24px;
-}
-
-.weather-label {
-  font-size: 12px;
-  color: #666;
-}
-
-.weather-value {
-  font-size: 16px;
-  font-weight: 600;
-  color: #00796b;
-}
-
-.weather-wind {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(0, 121, 107, 0.2);
-  text-align: center;
-  color: #00796b;
-  font-size: 14px;
-}
-
-/* 回到顶部按钮 */
-.back-top-button {
-  width: 50px;
-  height: 50px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  font-weight: bold;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-
-.back-top-button:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-}
-
-/* 酒店卡片样式 */
-.hotel-card {
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-  border: none !important;
-}
-
-.hotel-card :deep(.ant-card-head) {
-  background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%);
-}
-
-.hotel-title {
-  color: white !important;
-  font-weight: 600;
-}
-
-/* 顶部信息区布局 */
-.top-info-section {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 20px;
-}
-
-.left-info {
-  flex: 0 0 400px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.right-map {
+.entry-body {
+  min-width: 0;
   flex: 1;
 }
 
-/* 行程概览卡片 */
-.overview-card {
-  height: fit-content;
-}
-
-.overview-content {
+.entry-head {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
 }
 
-.info-item {
+.entry-title {
+  font-weight: 700;
+}
+
+.entry-meta {
+  margin-top: 10px;
+  color: #334155;
+}
+
+.reason-row {
+  align-items: flex-start;
+}
+
+.reason-value {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.info-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: #666;
-}
-
-.info-value {
-  font-size: 15px;
-  color: #333;
-  line-height: 1.6;
-}
-
-/* 预算卡片 */
-.budget-card {
-  height: fit-content;
-}
-
-.budget-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.budget-item {
-  text-align: center;
-  padding: 12px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
-  border-radius: 8px;
-  border: 1px solid #e8e8e8;
-}
-
-.budget-label {
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 8px;
-}
-
-.budget-value {
-  font-size: 20px;
-  font-weight: 700;
-  color: #1890ff;
-}
-
-.budget-total {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 8px;
-  color: white;
-}
-
-.total-label {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.total-value {
-  font-size: 28px;
-  font-weight: 700;
-}
-
-/* 地图卡片 */
-.map-card {
-  height: 100%;
-  min-height: 500px;
-}
-
-.map-card :deep(.ant-card-body) {
-  height: calc(100% - 57px);
+.reason-toggle {
   padding: 0;
+  height: auto;
+  align-self: flex-start;
 }
 
-.map-wrap {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.map-legend {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 10;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 10px;
-  padding: 8px 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #333;
-  margin: 4px 0;
-}
-
-.legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-/* 每日行程卡片 */
-.days-card {
-  margin-top: 20px;
-}
-
-.day-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-}
-
-.day-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #333;
-}
-
-.day-date {
-  font-size: 14px;
-  color: #999;
-}
-
-.day-info {
-  margin-bottom: 20px;
-  padding: 16px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
-  border-radius: 8px;
-  border: 1px solid #e8e8e8;
-}
-
-.info-row {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.info-row:last-child {
-  margin-bottom: 0;
-}
-
-.info-row .label {
-  font-weight: 600;
-  color: #666;
-  min-width: 100px;
-}
-
-.info-row .value {
-  color: #333;
-  flex: 1;
-}
-
-/* 卡片样式优化 */
-:deep(.ant-card) {
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  margin-bottom: 20px;
-  transition: all 0.3s ease;
-  animation: fadeInUp 0.6s ease-out;
-}
-
-:deep(.ant-card:hover) {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-:deep(.ant-card-head) {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white !important;
-  border-radius: 12px 12px 0 0;
-  font-weight: 600;
-}
-
-:deep(.ant-card-head-title) {
-  color: white !important;
-  font-size: 18px;
-}
-
-:deep(.ant-card-head-title span) {
-  color: white !important;
-}
-
-/* Collapse样式 */
-:deep(.ant-collapse) {
-  border: none;
-  background: transparent;
-}
-
-:deep(.ant-collapse-item) {
-  margin-bottom: 16px;
-  border: 1px solid #e8e8e8;
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-:deep(.ant-collapse-header) {
-  background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
-  padding: 16px 20px !important;
-  font-weight: 600;
-}
-
-:deep(.ant-collapse-content) {
-  border-top: 1px solid #e8e8e8;
-}
-
-:deep(.ant-collapse-content-box) {
-  padding: 20px;
-}
-
-/* 统计卡片样式 */
-:deep(.ant-statistic-title) {
-  font-size: 14px;
-  color: #666;
-  margin-bottom: 8px;
-}
-
-:deep(.ant-statistic-content) {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1890ff;
-}
-
-/* 景点卡片样式 */
-:deep(.ant-list-item) {
-  transition: all 0.3s ease;
-}
-
-:deep(.ant-list-item:hover) {
-  transform: scale(1.02);
-}
-
-/* 动画 */
-@keyframes fadeInDown {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 响应式设计 */
-@media (max-width: 1200px) {
-  .content-wrapper {
-    flex-direction: column;
-  }
-
-  .side-nav {
-    width: 100%;
-  }
-
-  .top-info-section {
-    flex-direction: column;
-  }
-
-  .left-info,
-  .right-map {
-    width: 100%;
-  }
-
-  .map-wrap {
-    height: 350px;
-  }
+.reason-bullet-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
 }
 
 @media (max-width: 768px) {
   .result-container {
-    padding: 16px 10px 90px;
+    padding: 12px;
   }
 
-  .page-header {
-    flex-direction: column;
-    gap: 12px;
-    align-items: stretch;
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    background: rgba(245, 247, 250, 0.96);
-    backdrop-filter: blur(10px);
-    padding: 12px 0;
-  }
-
-  .page-header .ant-space {
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-
-  .side-nav {
-    display: none;
-  }
-
-  .mobile-nav-bar,
-  .mobile-action-strip {
-    display: block;
-  }
-
+  .content-wrapper,
   .top-info-section {
     flex-direction: column;
-    gap: 14px;
   }
 
+  .side-nav,
   .left-info,
   .right-map {
     width: 100%;
+    flex: 1 1 auto;
   }
 
-  .main-content,
-  .days-card :deep(.ant-card-body) {
-    padding-left: 0;
-    padding-right: 0;
+  .map-card {
+    min-height: 360px;
   }
 
-  .attraction-image {
-    height: 150px;
+  .map-wrap,
+  .mapbox-container {
+    min-height: 320px;
+  }
+
+  .map-story-panel {
+    width: calc(100% - 24px);
+  }
+
+  .story-card {
+    flex-direction: column;
+  }
+
+  .story-image {
+    width: 100%;
+    height: 120px;
+    flex-basis: auto;
   }
 
   .entry-layout {
@@ -2079,44 +2303,10 @@ const drawRoutes = (attractions: any[]) => {
 
   .entry-image-wrap {
     width: 100%;
-  }
-
-  .entry-image {
-    width: 100%;
-    height: 160px;
-  }
-
-  .entry-head {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .timeline-card-group,
-  .attraction-card,
-  .meal-card {
-    border-radius: 16px;
-  }
-
-  .map-wrap {
-    height: 240px;
-  }
-
-  .map-legend {
-    position: static;
-    margin-top: 12px;
-    background: rgba(255, 255, 255, 0.95);
-    color: #333;
-    padding: 10px;
-  }
-
-  .quick-meta,
-  .meal-meta {
-    gap: 6px;
-  }
-
-  :deep(.ant-card-head-title) {
-    font-size: 16px;
+    height: 180px;
+    flex-basis: auto;
   }
 }
 </style>
 
+undefined

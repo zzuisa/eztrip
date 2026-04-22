@@ -293,6 +293,7 @@ class TravelPlanMeal(BaseModel):
     address: Optional[str] = Field(default=None, description="地址")
     latitude: Optional[float] = Field(default=None, description="纬度")
     longitude: Optional[float] = Field(default=None, description="经度")
+    place_id: Optional[str] = Field(default=None, description="地点ID")
 
 
 class TravelPlanActivity(BaseModel):
@@ -306,6 +307,8 @@ class TravelPlanActivity(BaseModel):
     address: Optional[str] = Field(default=None, description="地址")
     latitude: Optional[float] = Field(default=None, description="纬度")
     longitude: Optional[float] = Field(default=None, description="经度")
+    preference_matched: bool = Field(default=False, description="是否由用户偏好驱动")
+    preference_reason: Optional[str] = Field(default=None, description="偏好匹配说明")
 
 
 class TravelPlanDay(BaseModel):

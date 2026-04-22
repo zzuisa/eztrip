@@ -1,0 +1,35 @@
+---
+description: Project Development Guidelines
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# eztrip Development Guidelines
+
+Auto-generated from all feature plans. Last updated: 2026-04-16
+
+## Active Technologies
+
+- TypeScript + Vue 3 (Composition API) + Vue Router, Ant Design Vue, Pinia or existing store layer, Mapbox GL, html2canvas, jsPDF, Axios (001-smart-itinerary-optimization)
+
+## Project Structure
+
+```text
+src/
+tests/
+```
+
+## Commands
+
+npm test && npm run lint
+
+## Code Style
+
+TypeScript + Vue 3 (Composition API): Follow standard conventions
+
+## Recent Changes
+
+- 001-smart-itinerary-optimization: Added TypeScript + Vue 3 (Composition API) + Vue Router, Ant Design Vue, Pinia or existing store layer, Mapbox GL, html2canvas, jsPDF, Axios
+
+<!-- MANUAL ADDITIONS START -->
+<!-- MANUAL ADDITIONS END -->

@@ -7,6 +7,7 @@ import App from './App.vue'
 import Home from './views/Home.vue'
 import Result from './views/Result.vue'
 import DbTrainHome from './views/DbTrainHome.vue'
+import AdminTrips from './views/AdminTrips.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -17,14 +18,20 @@ const router = createRouter({
       component: Home
     },
     {
-      path: '/result',
+      path: '/result/:id',
       name: 'Result',
-      component: Result
+      component: Result,
+      props: true,
     },
     {
       path: '/db',
       name: 'DbTrainHome',
       component: DbTrainHome
+    },
+    {
+      path: '/admin',
+      name: 'AdminTrips',
+      component: AdminTrips,
     }
   ]
 })

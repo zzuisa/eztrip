@@ -1,48 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# =========================================================
-# Stop guardian-style backend + frontend processes
-# Usage:
-#   chmod +x stop-dev.sh
-#   ./stop-dev.sh
-# =========================================================
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="${ROOT_DIR}/logs"
-BACKEND_PID_FILE="${LOG_DIR}/backend.pid"
-FRONTEND_PID_FILE="${LOG_DIR}/frontend.pid"
 
-stop_pid_file() {
-  local pid_file="$1"
+stop_port() {
+  local port="$1"
   local label="$2"
 
-  if [[ ! -f "${pid_file}" ]]; then
-    echo "[WARN] ${label} pid file not found: ${pid_file}"
+  local pids
+  pids="$(lsof -ti :"${port}" 2>/dev/null || true)"
+  if [[ -z "${pids}" ]]; then
+    echo "[INFO] ${label} not running on port ${port}."
     return 0
   fi
 
-  local pid
-  pid="$(tr -d '[:space:]' < "${pid_file}" || true)"
-  if [[ -z "${pid}" ]]; then
-    echo "[WARN] ${label} pid file is empty: ${pid_file}"
-    return 0
-  fi
-
-  if kill -0 "${pid}" >/dev/null 2>&1; then
-    echo "[INFO] Stopping ${label} (PID ${pid})..."
+  echo "[INFO] Stopping ${label} on port ${port}: ${pids}"
+  for pid in ${pids}; do
     kill "${pid}" >/dev/null 2>&1 || true
-    sleep 1
-    if kill -0 "${pid}" >/dev/null 2>&1; then
-      echo "[WARN] ${label} still running, force killing PID ${pid}..."
+  done
+
+  sleep 1
+
+  local remain
+  remain="$(lsof -ti :"${port}" 2>/dev/null || true)"
+  if [[ -n "${remain}" ]]; then
+    echo "[INFO] Force killing ${label} on port ${port}: ${remain}"
+    for pid in ${remain}; do
       kill -9 "${pid}" >/dev/null 2>&1 || true
-    fi
-  else
-    echo "[INFO] ${label} already stopped (PID ${pid})."
+    done
   fi
 }
 
-stop_pid_file "${BACKEND_PID_FILE}" "backend"
-stop_pid_file "${FRONTEND_PID_FILE}" "frontend"
+stop_port 8881 "backend"
+stop_port 5173 "frontend"
 
-echo "[DONE] Stop command finished."
+echo "[DONE] stop-dev completed."

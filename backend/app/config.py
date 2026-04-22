@@ -7,16 +7,16 @@ from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
 # 加载环境变量
-# 优先加载当前 backend/.env，再兼容历史 HelloAgents/.env
+# 优先加载当前 backend/.env，再兼容历史 RogueTrip 迁移目录 .env
 backend_env = Path(__file__).resolve().parents[2] / ".env"
 if backend_env.exists():
     load_dotenv(backend_env, override=False)
 else:
     load_dotenv()
 
-helloagents_env = Path(__file__).parent.parent.parent.parent / "HelloAgents" / ".env"
-if helloagents_env.exists():
-    load_dotenv(helloagents_env, override=False)
+legacy_project_env = Path(__file__).parent.parent.parent.parent / "HelloAgents" / ".env"
+if legacy_project_env.exists():
+    load_dotenv(legacy_project_env, override=False)
 
 
 class Settings(BaseSettings):

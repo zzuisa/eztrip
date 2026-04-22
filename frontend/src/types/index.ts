@@ -37,6 +37,8 @@ export interface TravelPlanActivity {
   address?: string
   latitude?: number
   longitude?: number
+  preference_matched?: boolean
+  preference_reason?: string
 }
 
 export interface TravelPlanMeal {
@@ -117,6 +119,9 @@ export interface Budget {
 export interface DayPlan {
   date: string
   day_index: number
+  display_title?: string
+  arrangement_reason?: string
+  activities?: TravelPlanActivity[]
   description: string
   transportation: string
   accommodation: string
@@ -139,6 +144,7 @@ export interface TripPlan {
   city: string
   start_date: string
   end_date: string
+  budget_currency?: string
   days: DayPlan[]
   weather_info: WeatherInfo[]
   overall_suggestions: string
@@ -162,5 +168,6 @@ export interface TripPlanResponse {
   data?: TripPlan
 }
 
+export * from './itinerary'
 export * from './db'
 

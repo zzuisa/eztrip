@@ -39,11 +39,22 @@ ENV/
 
 # 日志
 *.log
+logs/
+nohup.out
 
 # 测试
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Node / 前端构建产物
+node_modules/
+dist/
+build/
+
+# 本地缓存 / 存储（运行时数据）
+backend/cache/
+backend/storage/
 
 # 操作系统
 .DS_Store
