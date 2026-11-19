@@ -40,8 +40,17 @@ async def run():
         return {"status": "ok", "model": "m", "score": 80, "summary": "s", "verdict": "pass", "issues": [],
                 "revised_days": [], "fingerprint": seen["fingerprint"], "source": source}
 
+    original_review, original_store = final_review.review_payload, travel_plan_store._travel_plan_store
     final_review.review_payload = fake_review
+    try:
+        await check(store, plan, rid, seen)
+    finally:
+        # module-level patches would leak into other test modules run in the same process
+        final_review.review_payload = original_review
+        travel_plan_store._travel_plan_store = original_store
 
+
+async def check(store, plan, rid, seen):
     async def gen():
         yield sse("done", {"success": True, "data": {**plan, "result_id": rid}, "result_id": rid})
 
