@@ -1,5 +1,5 @@
 <template>
-  <div class="home-container">
+  <div ref="pageEl" class="home-container">
     <!-- 背景装饰 -->
     <div class="bg-decoration">
       <div class="circle circle-1"></div>
@@ -12,7 +12,7 @@
       <div class="icon-wrapper">
         <span class="icon">✈️</span>
       </div>
-      <h1 class="page-title">智能旅行助手</h1>
+      <h1 class="page-title">{{ APP_NAME }}</h1>
       <p class="page-subtitle">基于AI的个性化旅行规划,让每一次出行都完美无忧</p>
     </div>
 
@@ -29,7 +29,7 @@
             <span class="section-title">目的地与日期</span>
           </div>
 
-          <a-row :gutter="24">
+          <a-row :gutter="24" class="mobile-stack-row">
             <a-col :span="8">
               <a-form-item name="city" :rules="[{ required: true, message: '请输入目的地城市' }]">
                 <template #label>
@@ -96,7 +96,7 @@
             <span class="section-title">偏好设置</span>
           </div>
 
-          <a-row :gutter="24">
+          <a-row :gutter="24" class="mobile-stack-row">
             <a-col :span="8">
               <a-form-item name="transportation">
                 <template #label>
@@ -191,63 +191,92 @@
             </a-button>
           </div>
         </a-form-item>
-
-        <!-- 加载进度条 -->
-        <a-form-item v-if="loading">
-          <div class="loading-container">
-            <a-progress
-              :percent="loadingProgress"
-              status="active"
-              :stroke-color="{
-                '0%': '#667eea',
-                '100%': '#764ba2',
-              }"
-              :stroke-width="10"
-            />
-            <p class="loading-status">
-              {{ loadingStatus }}
-            </p>
-            <div class="stream-badge-row">
-              <a-tag :color="streamConnected ? 'green' : 'red'">
-                {{ streamConnected ? '实时连接中' : '连接已断开' }}
-              </a-tag>
-              <a-tag color="blue">实时生成中</a-tag>
-            </div>
-            <a-collapse v-model:activeKey="debugActiveKeys" ghost>
-              <a-collapse-panel key="log" header="实时日志">
-                <div class="live-panel">
-                  <div v-for="(item, idx) in liveLogs" :key="`log-${idx}`" class="live-log-item">{{ item }}</div>
-                </div>
-              </a-collapse-panel>
-              <a-collapse-panel key="debug" header="LLM 思考/调试输出">
-                <div class="live-panel live-debug-panel">
-                  <div v-for="(item, idx) in liveDebug" :key="`debug-${idx}`" class="live-log-item">{{ item }}</div>
-                </div>
-              </a-collapse-panel>
-            </a-collapse>
-          </div>
-        </a-form-item>
       </a-form>
     </a-card>
+
+    <FullscreenLoading
+      ref="loadingOverlayRef"
+      :visible="fullscreenVisible"
+      :percent="loadingProgress"
+      :stage="currentStage"
+      title="正在生成行程"
+      :status="loadingStatus"
+      :logs="displayLogs"
+      :agent-phases="agentPhases"
+      :cancel-disabled="cancelDisabled"
+      @cancel="handleCancel"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { generateTravelPlanByLocation, streamTravelPlanByLocation } from '@/services/api'
+import { streamTravelPlanByLocation } from '@/services/api'
 import type { TripFormData } from '@/types'
 import type { Dayjs } from 'dayjs'
+import FullscreenLoading from '@/components/FullscreenLoading.vue'
+import { useFullscreenLoadingTransition } from '@/composables/useFullscreenLoadingTransition'
+import { formatLoadingLog } from '@/utils/loading-log-format'
+import { APP_NAME } from '@/constants/brand'
 
 const router = useRouter()
+const pageEl = ref<HTMLElement | null>(null)
+const loadingOverlayRef = ref<InstanceType<typeof FullscreenLoading> | null>(null)
+const fullscreenVisible = ref(false)
 const loading = ref(false)
+const currentStage = ref('connecting')
 const loadingProgress = ref(0)
 const loadingStatus = ref('')
+// spec005 多 Agent：委派时间轴 + 逐天到达的行程（agent 模式才有）
+const agentPhases = ref<{ agent: string; status: string; detail: string }[]>([])
+const streamedDays = ref<Map<number, any>>(new Map())
 const liveLogs = ref<string[]>([])
-const liveDebug = ref<string[]>([])
 const streamConnected = ref(false)
-const debugActiveKeys = ref<string[]>(['log', 'debug'])
+const stepStatus = ref<Record<string, string>>({
+  strategy: 'pending',
+  generation: 'pending',
+  reflection: 'pending',
+})
+const reflectionFallbackMessage = ref('')
+const stepStatusList = ref([
+  { key: 'strategy', label: '搜索策略', status: 'pending' },
+  { key: 'generation', label: '行程生成', status: 'pending' },
+  { key: 'reflection', label: '反思优化', status: 'pending' },
+])
+
+const cancelDisabled = computed(() => !loading.value || loadingProgress.value >= 100)
+const displayLogs = computed(() => [...liveLogs.value].slice(0, 5).reverse())
+
+const transition = useFullscreenLoadingTransition({ durationMs: 560 })
+const abortController = ref<AbortController | null>(null)
+const navigating = ref(false)
+
+const pushUiLog = (line: string | null) => {
+  const msg = (line || '').trim()
+  if (!msg) return
+  if (liveLogs.value[0] === msg) return
+  liveLogs.value.unshift(msg)
+  liveLogs.value = liveLogs.value.slice(0, 12)
+}
+
+const showOverlay = async () => {
+  fullscreenVisible.value = true
+  await nextTick()
+  await transition.enter({
+    page: pageEl.value,
+    overlay: loadingOverlayRef.value?.getOverlayEl?.(),
+  })
+}
+
+const hideOverlay = async () => {
+  await transition.leave({
+    page: pageEl.value,
+    overlay: loadingOverlayRef.value?.getOverlayEl?.(),
+  })
+  fullscreenVisible.value = false
+}
 
 type HomeFormData = Omit<TripFormData, 'start_date' | 'end_date'> & {
   start_date: Dayjs | null
@@ -264,6 +293,25 @@ const formData = reactive<HomeFormData>({
   preferences: [],
   free_text_input: ''
 })
+
+const syncStepStatusList = () => {
+  stepStatusList.value = stepStatusList.value.map((item) => ({
+    ...item,
+    status: stepStatus.value[item.key] || 'pending',
+  }))
+}
+
+const resetStepStatus = () => {
+  stepStatus.value = { strategy: 'pending', generation: 'pending', reflection: 'pending' }
+  reflectionFallbackMessage.value = ''
+  syncStepStatusList()
+}
+
+const updateStepStatus = (name: string, status: string) => {
+  if (!name) return
+  stepStatus.value = { ...stepStatus.value, [name]: status || 'pending' }
+  syncStepStatusList()
+}
 
 // 监听日期变化,自动计算旅行天数
 watch([() => formData.start_date, () => formData.end_date], ([start, end]) => {
@@ -288,11 +336,19 @@ const handleSubmit = async () => {
   }
 
   loading.value = true
+  navigating.value = false
+  currentStage.value = 'connecting'
   loadingProgress.value = 0
-  loadingStatus.value = '正在初始化...'
+  loadingStatus.value = '正在连接生成服务...'
   liveLogs.value = []
-  liveDebug.value = []
   streamConnected.value = true
+  resetStepStatus()
+  agentPhases.value = []
+  streamedDays.value = new Map()
+  abortController.value = new AbortController()
+
+  pushUiLog(formatLoadingLog({ type: 'progress', percent: 1, status: '正在连接生成服务...' }))
+  await showOverlay()
 
   try {
     const requestData: TripFormData = {
@@ -317,43 +373,87 @@ const handleSubmit = async () => {
     }
 
     await streamTravelPlanByLocation(payload, {
+      onPhase: (phase) => {
+        agentPhases.value = [...agentPhases.value, phase]
+      },
+      onDay: (day, data) => {
+        streamedDays.value.set(day, data)
+        pushUiLog(`第${day}天已生成`)
+      },
       onProgress: (percent, status) => {
         loadingProgress.value = percent
         loadingStatus.value = status
+        pushUiLog(formatLoadingLog({ type: 'progress', percent, status }))
+      },
+      onStage: (stage) => {
+        currentStage.value = stage
       },
       onLog: (msg) => {
-        liveLogs.value.unshift(msg)
-        liveLogs.value = liveLogs.value.slice(0, 8)
-      },
-      onDebug: (stage, content) => {
-        liveDebug.value.unshift(`[${stage}] ${content}`)
-        liveDebug.value = liveDebug.value.slice(0, 6)
-      },
-      onDone: (response) => {
-        loadingProgress.value = 100
-        loadingStatus.value = '✅ 完成!'
-        if (response.success && response.data) {
-          sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
-          message.success('旅行计划生成成功!')
-          setTimeout(() => router.push('/result'), 500)
-        } else {
-          message.error(response.message || '生成失败')
+        pushUiLog(formatLoadingLog({ type: 'log', message: msg }) ?? null)
+        if (msg.includes('反思结果无效，已回退到初稿')) {
+          reflectionFallbackMessage.value = msg
+          updateStepStatus('reflection', 'error')
         }
       },
-      onError: (msg) => {
-        message.error(msg)
+      onStep: ({ name, status }) => {
+        updateStepStatus(name, status)
+        pushUiLog(formatLoadingLog({ type: 'step', name, status }))
       },
-    })
+      onDone: (response) => {
+        currentStage.value = 'done'
+        loadingProgress.value = 100
+        loadingStatus.value = '✅ 生成完成'
+        pushUiLog(formatLoadingLog({ type: 'done', resultId: (response as any)?.result_id }))
+
+        if (!response.success || !response.data) {
+          message.error(response.message || '生成失败')
+          return
+        }
+
+        sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
+        const resultId = (response.data as any)?.result_id || (response as any)?.result_id
+        message.success('旅行计划生成成功!')
+
+        ;(async () => {
+          navigating.value = true
+          await hideOverlay()
+          if (resultId) router.push(`/result/${resultId}`)
+          else router.push('/result/fallback')
+        })()
+      },
+      onError: (msg) => {
+        pushUiLog(formatLoadingLog({ type: 'error', message: msg || '生成失败' }))
+        message.error(msg || '生成旅行计划失败，请稍后重试')
+      },
+    }, { signal: abortController.value.signal })
   } catch (error: any) {
-    message.error(error.message || '生成旅行计划失败,请稍后重试')
+    const aborted = error?.name === 'AbortError' || String(error?.message || '').toLowerCase().includes('aborted')
+    if (!aborted) message.error(error.message || '生成旅行计划失败,请稍后重试')
   } finally {
-    setTimeout(() => {
-      loading.value = false
-      loadingProgress.value = 0
-      loadingStatus.value = ''
-      streamConnected.value = false
-    }, 1000)
+    loading.value = false
+    streamConnected.value = false
+    abortController.value = null
+    if (!navigating.value && fullscreenVisible.value) {
+      void hideOverlay()
+    }
   }
+}
+
+const handleCancel = async () => {
+  if (!loading.value) return
+  try {
+    abortController.value?.abort()
+  } catch {}
+  navigating.value = false
+  loadingStatus.value = '已取消'
+  currentStage.value = 'cancelled'
+  pushUiLog('已取消生成')
+  await hideOverlay()
+  loading.value = false
+  loadingProgress.value = 0
+  loadingStatus.value = ''
+  streamConnected.value = false
+  abortController.value = null
 }
 
 const handleDebugSubmit = async () => {
@@ -367,16 +467,23 @@ const handleDebugSubmit = async () => {
     transportation: formData.transportation || '公共交通',
     accommodation: formData.accommodation || '经济型酒店',
     preferences: formData.preferences?.length ? formData.preferences : ['历史文化'],
-    free_text_input: '调试模式：请基于 mapbox 工具返回真实可执行的 2 天游玩安排。'
+    free_text_input: '调试模式：请基于地图工具返回真实可执行的 2 天游玩安排。'
   }
 
   loading.value = true
+  navigating.value = false
+  currentStage.value = 'connecting'
   loadingProgress.value = 0
-  loadingStatus.value = '🧪 调试模式初始化中...'
+  loadingStatus.value = '正在连接生成服务...'
 
   liveLogs.value = []
-  liveDebug.value = []
   streamConnected.value = true
+  resetStepStatus()
+  agentPhases.value = []
+  streamedDays.value = new Map()
+  abortController.value = new AbortController()
+  pushUiLog('调试模式：开始生成示例行程')
+  await showOverlay()
 
   try {
     await streamTravelPlanByLocation({
@@ -388,42 +495,66 @@ const handleDebugSubmit = async () => {
       transportation: debugRequest.transportation,
       accommodation: debugRequest.accommodation,
     }, {
+      onPhase: (phase) => {
+        agentPhases.value = [...agentPhases.value, phase]
+      },
+      onDay: (day, data) => {
+        streamedDays.value.set(day, data)
+        pushUiLog(`第${day}天已生成`)
+      },
       onProgress: (percent, status) => {
         loadingProgress.value = percent
         loadingStatus.value = status
+        pushUiLog(formatLoadingLog({ type: 'progress', percent, status }))
+      },
+      onStage: (stage) => {
+        currentStage.value = stage
       },
       onLog: (msg) => {
-        liveLogs.value.unshift(msg)
-        liveLogs.value = liveLogs.value.slice(0, 8)
+        pushUiLog(formatLoadingLog({ type: 'log', message: msg }) ?? null)
+        if (msg.includes('反思结果无效，已回退到初稿')) {
+          reflectionFallbackMessage.value = msg
+          updateStepStatus('reflection', 'error')
+        }
       },
-      onDebug: (stage, content) => {
-        liveDebug.value.unshift(`[${stage}] ${content}`)
-        liveDebug.value = liveDebug.value.slice(0, 6)
+      onStep: ({ name, status }) => {
+        updateStepStatus(name, status)
+        pushUiLog(formatLoadingLog({ type: 'step', name, status }))
       },
       onDone: (response) => {
+        currentStage.value = 'done'
         loadingProgress.value = 100
-        loadingStatus.value = '✅ 调试完成!'
+        loadingStatus.value = '✅ 生成完成'
+        pushUiLog(formatLoadingLog({ type: 'done', resultId: (response as any)?.result_id }))
         if (response.success && response.data) {
           sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
+          const resultId = (response.data as any)?.result_id || (response as any)?.result_id
           message.success('调试规划成功（法国行程）')
-          setTimeout(() => router.push('/result'), 500)
+          ;(async () => {
+            navigating.value = true
+            await hideOverlay()
+            if (resultId) router.push(`/result/${resultId}`)
+            else router.push('/result/fallback')
+          })()
         } else {
           message.error(response.message || '调试规划失败')
         }
       },
       onError: (msg) => {
-        message.error(msg)
+        pushUiLog(formatLoadingLog({ type: 'error', message: msg || '调试失败' }))
+        message.error(msg || '调试规划失败，请稍后重试')
       },
-    })
+    }, { signal: abortController.value.signal })
   } catch (error: any) {
-    message.error(error.message || '调试规划失败,请稍后重试')
+    const aborted = error?.name === 'AbortError' || String(error?.message || '').toLowerCase().includes('aborted')
+    if (!aborted) message.error(error.message || '调试规划失败,请稍后重试')
   } finally {
-    setTimeout(() => {
-      loading.value = false
-      loadingProgress.value = 0
-      loadingStatus.value = ''
-      streamConnected.value = false
-    }, 1000)
+    loading.value = false
+    streamConnected.value = false
+    abortController.value = null
+    if (!navigating.value && fullscreenVisible.value) {
+      void hideOverlay()
+    }
   }
 }
 </script>
@@ -770,6 +901,284 @@ const handleDebugSubmit = async () => {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+/* =========================
+   Mobile-first visual refresh
+   ========================= */
+.home-container {
+  padding: 24px 14px 40px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(255, 255, 255, 0.14), transparent 28%),
+    linear-gradient(160deg, #5b7cfa 0%, #6f4fd8 48%, #1f2937 100%);
+}
+
+.page-header {
+  margin-bottom: 22px;
+  padding: 8px 0 0;
+}
+
+.icon-wrapper {
+  margin-bottom: 12px;
+}
+
+.icon {
+  font-size: 60px;
+}
+
+.page-title {
+  font-size: clamp(34px, 8vw, 48px);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+  color: #fff;
+}
+
+.page-subtitle {
+  max-width: 28rem;
+  margin: 0 auto;
+  font-size: 14px;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.form-card {
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.24);
+  backdrop-filter: blur(10px);
+}
+
+.form-card :deep(.ant-card-body) {
+  padding: 18px 16px 8px;
+}
+
+.form-section {
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(255, 255, 255, 0.98));
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.section-header {
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 15px;
+}
+
+.form-label {
+  font-size: 13px;
+  color: #334155;
+}
+
+.custom-input,
+.custom-select,
+.custom-textarea {
+  border-radius: 14px !important;
+}
+
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.submit-button,
+.debug-button {
+  width: 100%;
+  height: 48px;
+  border-radius: 14px;
+  font-weight: 600;
+}
+
+.submit-button {
+  background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+  border: none;
+  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.24);
+}
+
+.debug-button {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.loading-container {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.loading-status {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #475569;
+}
+
+.stream-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.step-status-panel {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.step-status-title {
+  font-size: 13px;
+  color: #334155;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.step-status-list {
+  display: grid;
+  gap: 6px;
+}
+
+.step-status-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.step-name {
+  font-size: 12px;
+  color: #475569;
+}
+
+.reflection-fallback {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b91c1c;
+}
+
+.live-panel {
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.live-debug-panel {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.live-log-item {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #334155;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+@media (min-width: 768px) {
+  .home-container {
+    padding: 56px 24px 64px;
+  }
+
+  .page-header {
+    margin-bottom: 36px;
+  }
+
+  .page-subtitle {
+    font-size: 16px;
+  }
+
+  .form-card :deep(.ant-card-body) {
+    padding: 28px 28px 12px;
+  }
+
+  .form-section {
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .mobile-stack-row {
+    flex-wrap: nowrap;
+  }
+
+  .action-buttons {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .submit-button,
+  .debug-button {
+    width: auto;
+    min-width: 220px;
+  }
+
+  .loading-container {
+    padding: 18px;
+  }
+
+  .live-panel {
+    max-height: 220px;
+  }
+}
+
+@media (max-width: 767px) {
+  .bg-decoration .circle-1,
+  .bg-decoration .circle-2,
+  .bg-decoration .circle-3 {
+    opacity: 0.45;
+    filter: blur(6px);
+  }
+
+  .page-header {
+    text-align: left;
+  }
+
+  .icon-wrapper {
+    margin-bottom: 8px;
+  }
+
+  .form-card {
+    border-radius: 20px;
+  }
+
+  .mobile-stack-row {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .mobile-stack-row :deep(.ant-col) {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+
+  .days-display-compact {
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(37, 99, 235, 0.08);
+  }
+
+  .preference-tags {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .preference-tag {
+    margin: 0 !important;
+    padding: 6px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+
+  .custom-checkbox-group {
+    display: contents;
   }
 }
 </style>

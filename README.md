@@ -56,11 +56,11 @@ backend/        FastAPI app
   app/evals/      offline scoring of saved plans (no model calls)
   agent-config/   models, prompts versions and tools per agent role
   tests/
-frontend/       the first Vue 3 client (kept for reference, see below)
+frontend/       Vue 3 + Vite client
 web-modules/    UI modules used by the current frontend
 ```
 
-About the frontend: `frontend/` is the original Vue client from the first version. The production UI has moved on since then. The newer parts (stay planner, budget panel, route sync, map camera, Xiaohongshu tips) live in `web-modules/` as plain JS modules and are wired into the built app by `web-modules/build.cjs`.
+About the frontend: `frontend/` is the Vue 3 app as of July 2026, when the project moved to a new server. It builds on its own and has its own unit tests (`npm ci && npm test`). Parts added after the move (stay planner, budget panel, route sync, map camera, Xiaohongshu tips) are kept as plain JS modules in `web-modules/` and get wired into the built app by `web-modules/build.cjs`, so the production UI is `frontend/` plus those modules.
 
 ## Running the backend
 

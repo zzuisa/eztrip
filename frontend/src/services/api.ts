@@ -1,11 +1,25 @@
 import axios from 'axios'
-import type { TripFormData, TripPlanResponse, TripPlan, Attraction, DayPlan, TravelPlanResponseV2, TravelPlanDataV2, TravelPlanAttractionV2, TravelPlanDayV2, TravelPlanActivity, TravelPlanMeal } from '@/types'
+import type { TripFormData, TripPlanResponse, TripPlan, Attraction, DayPlan } from '@/types'
+import { normalizeItinerary } from '@/services/itinerary-normalizer'
+import { deriveStageFromProgress, deriveStageFromStep } from '@/utils/loading-stage-animation'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8881'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8881/api'
+
+export function logPosterPlaybackEvent(
+  phase: 'start' | 'frame-change' | 'pause' | 'resume' | 'stop',
+  detail?: string,
+) {
+  const suffix = detail ? ` ${detail}` : ''
+  console.info(`[poster-playback][${phase}]${suffix}`)
+}
+
+const DEFAULT_TRIP_TIMEOUT_MS = 120000 // 默认 2 分钟
+const LONG_TRIP_TIMEOUT_MS = 420000 // 长行程请求 7 分钟
+const LONG_TRIP_THRESHOLD_DAYS = 4
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 120000, // 2分钟超时
+  timeout: DEFAULT_TRIP_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json'
   }
@@ -49,6 +63,58 @@ export async function generateTripPlan(formData: TripFormData): Promise<TripPlan
   } catch (error: any) {
     console.error('生成旅行计划失败:', error)
     throw new Error(error.response?.data?.detail || error.message || '生成旅行计划失败')
+  }
+}
+
+function normalizeTripPlanLike(raw: any): TripPlan | null {
+  const normalized = normalizeItinerary(raw, { source: 'api' })
+  if (!normalized) return null
+  const plan = raw?.data ?? raw ?? {}
+  const days: DayPlan[] = normalized.days.map((day) => ({
+    date: day.date || '',
+    day_index: day.dayIndex,
+    display_title: day.title,
+    arrangement_reason: day.arrangementReason,
+    description: day.description || '',
+    transportation: day.transportation || '公共交通',
+    accommodation: day.accommodation || '',
+    activities: Array.isArray((plan.days || plan.itinerary)?.[day.dayIndex]?.activities)
+      ? (plan.days || plan.itinerary)[day.dayIndex].activities
+      : [],
+    attractions: day.attractions.map((item) => ({
+      name: item.name,
+      address: item.address || '',
+      location: item.location || { latitude: 0, longitude: 0 },
+      visit_duration: item.visitDurationMinutes || 90,
+      description: item.description || item.routeDescription || '',
+      ticket_price: item.ticketPrice,
+      image_url: item.imageUrl,
+      rating: item.rating,
+    })),
+    meals: day.meals.map((item) => ({
+      type: 'snack',
+      name: item.name,
+      address: item.address,
+      location: item.location,
+      description: item.description,
+      estimated_cost: item.estimatedCost,
+    })),
+  }))
+  return {
+    city: normalized.city,
+    start_date: normalized.startDate || '',
+    end_date: normalized.endDate || '',
+    budget_currency: normalized.budgetSummary?.currency,
+    days,
+    weather_info: Array.isArray(plan.weather_info) ? plan.weather_info : [],
+    overall_suggestions: Array.isArray(normalized.suggestions) ? normalized.suggestions.join('；') : String(plan.overall_suggestions || ''),
+    budget: normalized.budgetSummary ? {
+      total_attractions: normalized.budgetSummary.attractions,
+      total_hotels: normalized.budgetSummary.hotels,
+      total_meals: normalized.budgetSummary.meals,
+      total_transportation: normalized.budgetSummary.transport,
+      total: normalized.budgetSummary.total,
+    } : undefined,
   }
 }
 
@@ -123,12 +189,23 @@ interface TravelPlanApiData {
   }
   tips: string[]
   warnings?: string[]
+  result_id?: string
 }
 
 interface TravelPlanApiResponse {
   success: boolean
   message: string
   data: TravelPlanApiData
+  result_id?: string
+}
+
+export interface StoredTripSummary {
+  id: string
+  created_at: string
+  updated_at: string
+  location: string
+  days: number
+  warnings_count: number
 }
 
 function normalizeActivityText(activity: unknown): string {
@@ -150,6 +227,26 @@ function normalizeActivityText(activity: unknown): string {
   return String(activity)
 }
 
+async function readResponseBody(response: Response): Promise<string> {
+  try {
+    return await response.text()
+  } catch {
+    return ''
+  }
+}
+
+function safeParseJSON(text: string): any {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function getTripTimeoutMs(days: number): number {
+  return days >= LONG_TRIP_THRESHOLD_DAYS ? LONG_TRIP_TIMEOUT_MS : DEFAULT_TRIP_TIMEOUT_MS
+}
+
 /**
  * Google Places 结构化旅行规划（适配现有 Result UI 数据结构）
  */
@@ -161,10 +258,19 @@ export async function generateTravelPlanByLocation(payload: {
   end_date?: string
   transportation?: string
   accommodation?: string
+}, handlers?: {
+  onProgress?: (percent: number, status: string) => void
+  onLog?: (message: string) => void
+  onDebug?: (stage: string, content: string) => void
 }): Promise<TripPlanResponse> {
   try {
+    const timeout = getTripTimeoutMs(payload.days)
+    if (payload.days >= LONG_TRIP_THRESHOLD_DAYS) {
+      handlers?.onProgress?.(5, '长行程生成中，预计耗时较长...')
+      handlers?.onLog?.('已启用长行程超时与稳定性策略')
+    }
     const response = await apiClient.post<TravelPlanApiResponse>('/api/travel-plan', payload, {
-      timeout: 300000,
+      timeout,
     })
     const resp = response.data
 
@@ -179,7 +285,7 @@ export async function generateTravelPlanByLocation(payload: {
       image_url: undefined,
     }))
 
-    const days: DayPlan[] = (resp.data.itinerary || []).map((d, idx) => {
+    const itineraryDays: DayPlan[] = (resp.data.itinerary || []).map((d, idx) => {
       const matched: Attraction[] = []
       const activityTexts = (d.activities || []).map(normalizeActivityText).filter(Boolean)
       activityTexts.forEach((act) => {
@@ -198,38 +304,80 @@ export async function generateTravelPlanByLocation(payload: {
       return {
         date: `第${d.day}天`,
         day_index: idx,
+        display_title: d.title,
+        arrangement_reason: d.route_summary,
         description: `${d.title}（${d.route_summary}）`,
         transportation: payload.transportation || '公共交通',
         accommodation: payload.accommodation || '市中心酒店',
+        activities: d.activities || [],
         attractions: dayAttrs,
         meals,
       }
     })
 
-    const mappedPlan: TripPlan = {
+    const mappedPlan = normalizeTripPlanLike({
       city: resp.data.location,
+      location: resp.data.location,
       start_date: payload.start_date || '待定',
       end_date: payload.end_date || `${resp.data.days}天行程`,
-      days,
+      itinerary: itineraryDays.map((day, idx) => ({
+        day: idx + 1,
+        title: day.display_title || day.description,
+        route_summary: day.arrangement_reason || day.description,
+        activities: day.activities as any,
+        meals: (day.meals || []).map((meal: any) => ({
+          type: meal.type,
+          name: meal.name,
+          time: meal.time || '',
+          description: meal.description || '',
+          route_desc: meal.description || '',
+          estimated_cost: meal.estimated_cost || 0,
+          address: meal.address,
+          latitude: meal.location?.latitude,
+          longitude: meal.location?.longitude,
+        })),
+        attractions: (day.attractions || []).map((attraction: any) => ({
+          name: attraction.name,
+          address: attraction.address,
+          location: attraction.location,
+          visit_duration: attraction.visit_duration,
+          description: attraction.description,
+          ticket_price: attraction.ticket_price,
+          image_url: attraction.image_url,
+          rating: attraction.rating,
+        })),
+      })),
       weather_info: [],
-      overall_suggestions: (resp.data.tips || []).join('；'),
-      budget: {
-        total_attractions: resp.data.total_budget.tickets,
-        total_hotels: 0,
-        total_meals: resp.data.total_budget.food,
-        total_transportation: resp.data.total_budget.transport,
-        total: resp.data.total_budget.total,
-      },
-    }
+      tips: resp.data.tips || [],
+      total_budget: resp.data.total_budget,
+    })
+
+    handlers?.onProgress?.(100, '✅ 生成完成')
+    handlers?.onLog?.('行程已生成并完成标准化')
 
     return {
       success: resp.success,
       message: resp.message,
-      data: mappedPlan,
+      data: mappedPlan || {
+        city: resp.data.location,
+        start_date: payload.start_date || '待定',
+        end_date: payload.end_date || `${resp.data.days}天行程`,
+        days: itineraryDays,
+        weather_info: [],
+        overall_suggestions: (resp.data.tips || []).join('；'),
+      },
     }
   } catch (error: any) {
     console.error('Google Places旅行规划失败:', error)
-    throw new Error(error.response?.data?.detail || error.message || 'Google Places旅行规划失败')
+    const isTimeout = error?.code === 'ECONNABORTED' || String(error?.message || '').toLowerCase().includes('timeout')
+    const fallbackMessage = payload.days >= LONG_TRIP_THRESHOLD_DAYS && isTimeout
+      ? '行程较长，生成耗时较久，请稍后重试或切换为流式生成。'
+      : 'Google Places旅行规划失败'
+    const detail = error.response?.data?.detail
+    if (payload.days >= LONG_TRIP_THRESHOLD_DAYS && isTimeout) {
+      throw new Error(detail || fallbackMessage)
+    }
+    throw new Error(detail || error.message || fallbackMessage)
   }
 }
 
@@ -246,55 +394,199 @@ export async function streamTravelPlanByLocation(
   handlers: {
     onProgress?: (percent: number, status: string) => void
     onLog?: (message: string) => void
-    onDebug?: (stage: string, content: string) => void
+    onStep?: (step: { name: string; status: string; description: string }) => void
+    onStage?: (stage: string) => void
     onDone?: (response: TripPlanResponse) => void
     onError?: (message: string) => void
+    // spec005 多 Agent 模式：委派时间轴 + 逐天渲染
+    onPhase?: (phase: { agent: string; status: string; detail: string }) => void
+    onDay?: (day: number, data: any) => void
   },
+  options: { signal?: AbortSignal } = {},
 ) {
-  const response = await fetch(`${API_BASE_URL}/api/travel-plan/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  const sanitizeBusinessLog = (input: string): string => {
+    const raw = String(input || '').trim()
+    if (!raw) return ''
+    const lower = raw.toLowerCase()
+    if (lower.includes('llm') || lower.includes('prompt') || lower.includes('chain-of-thought')) {
+      return ''
+    }
+    if (lower.includes('poster') || lower.includes('image') || lower.includes('海报')) {
+      return '正在整理海报素材与图片顺序...'
+    }
+    if (lower.includes('normalize') || lower.includes('标准化')) {
+      return '正在标准化行程结构...'
+    }
+    if (lower.includes('reflect') || lower.includes('反思')) {
+      return '正在优化行程细节...'
+    }
+    return raw
+  }
+
+  const emitBusinessLog = (message: string) => {
+    const sanitized = sanitizeBusinessLog(message)
+    if (!sanitized) return
+    handlers.onLog?.(sanitized)
+  }
+
+  const phaseLog = (stage: string, content: string) => {
+    console.log(`[travel-plan][${stage}] ${content}`)
+  }
+
+  const debugLog = (stage: string, content: string) => {
+    console.debug(`[travel-plan][llm:${stage}] ${content}`)
+  }
+
+  phaseLog('init', `开始生成：${payload.location} / ${payload.days} 天游程`)
+  handlers.onProgress?.(1, '正在连接生成服务...')
+  handlers.onStage?.('connecting')
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/api/travel-plan/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: options.signal,
+    })
+  } catch (e: any) {
+    const aborted = e?.name === 'AbortError' || String(e?.message || '').toLowerCase().includes('aborted')
+    if (aborted) {
+      phaseLog('abort', '请求已取消')
+      return
+    }
+    throw e
+  }
+
+  phaseLog('network', `已收到响应，status=${response.status}`)
 
   if (!response.ok || !response.body) {
-    throw new Error(`流式请求失败: ${response.status}`)
+    const errorText = await readResponseBody(response)
+    const parsed = safeParseJSON(errorText)
+    const message = parsed?.message || parsed?.detail || errorText || `流式请求失败: ${response.status}`
+    handlers.onError?.(message)
+    throw new Error(message)
   }
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
   let eventName = 'message'
+  let lastProgress = 0
 
   const flush = (chunk: string) => {
     const lines = chunk.split('\n')
     for (const line of lines) {
       if (line.startsWith('event:')) {
         eventName = line.replace(/^event:\s*/, '').trim()
+        if (eventName !== 'message') {
+          phaseLog('sse', `收到事件类型：${eventName}`)
+        }
       } else if (line.startsWith('data:')) {
         const dataText = line.replace(/^data:\s*/, '').trim()
         try {
           const data = JSON.parse(dataText)
-          if (eventName === 'progress') handlers.onProgress?.(data.percent ?? 0, data.status ?? '')
-          else if (eventName === 'log') handlers.onLog?.(data.message ?? '')
-          else if (eventName === 'llm_debug') handlers.onDebug?.(data.stage ?? 'debug', data.raw ? String(data.raw) : data.prompt ? String(data.prompt) : JSON.stringify(data))
-          else if (eventName === 'done') handlers.onDone?.(data as TripPlanResponse)
-          else if (eventName === 'error') handlers.onError?.(data.message ?? '生成失败')
+          if (eventName === 'progress') {
+            const percent = data.percent ?? 0
+            lastProgress = percent
+            handlers.onProgress?.(percent, data.status ?? '')
+            handlers.onStage?.(deriveStageFromProgress(percent))
+            phaseLog('progress', `${percent}% ${data.status ?? ''}`.trim())
+          } else if (eventName === 'log') {
+            const message = data.message ?? ''
+            emitBusinessLog(message)
+            phaseLog('log', message)
+          } else if (eventName === 'llm_debug') {
+            const content = data.raw ? String(data.raw) : data.prompt ? String(data.prompt) : JSON.stringify(data)
+            debugLog(data.stage ?? 'debug', content)
+          } else if (eventName === 'step') {
+            const stepPayload = {
+              name: String(data.name || ''),
+              status: String(data.status || ''),
+              description: String(data.description || ''),
+            }
+            handlers.onStep?.(stepPayload)
+            handlers.onStage?.(deriveStageFromStep(stepPayload.name, stepPayload.status))
+            emitBusinessLog(stepPayload.description || stepPayload.name)
+            phaseLog('step', `${stepPayload.name}/${stepPayload.status} ${stepPayload.description}`.trim())
+          } else if (eventName === 'phase') {
+            // 多 Agent 委派事件（supervisor / xhs_insight / poi_scout / food_scout / composer）
+            const phase = {
+              agent: String(data.agent || ''),
+              status: String(data.status || ''),
+              detail: String(data.detail || ''),
+            }
+            handlers.onPhase?.(phase)
+            phaseLog('agent', `${phase.agent}/${phase.status} ${phase.detail}`.trim())
+          } else if (eventName === 'day') {
+            // 单天生成完毕 → 可以立刻渲染这一天，不必等整份行程
+            const dayNo = Number(data.day || 0)
+            handlers.onDay?.(dayNo, data.data)
+            phaseLog('day', `第${dayNo}天已生成`)
+          } else if (eventName === 'delta') {
+            // supervisor 的策展说明
+            emitBusinessLog(String(data.text || ''))
+          } else if (eventName === 'result') {
+            // agent 模式的完整结果；`done` 会紧随其后，这里只记日志
+            phaseLog('result', '多 Agent 编排完成')
+          } else if (eventName === 'done') {
+            phaseLog('done', '服务端已返回完整行程结果')
+            handlers.onProgress?.(100, '✅ 生成完成')
+            handlers.onStage?.('done')
+            handlers.onDone?.(data as TripPlanResponse)
+          } else if (eventName === 'error') {
+            const message = data.message || data.detail || `生成失败（stage: ${data.stage || 'unknown'}）`
+            phaseLog('error', message)
+            handlers.onError?.(message)
+          }
         } catch (e) {
+          phaseLog('parse-error', '解析 SSE 数据失败')
           console.error('解析 SSE 失败:', e)
         }
       }
     }
   }
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() || ''
-    parts.forEach(flush)
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+      parts.forEach(flush)
+    }
+  } catch (e: any) {
+    const aborted = e?.name === 'AbortError' || String(e?.message || '').toLowerCase().includes('aborted')
+    if (aborted) {
+      phaseLog('abort', '流式读取已取消')
+      return
+    }
+    throw e
   }
+
+  if (lastProgress < 100) {
+    phaseLog('complete', '流式读取结束，等待最终结果处理')
+  }
+}
+
+export async function fetchTravelPlanResultById(resultId: string): Promise<TripPlanResponse> {
+  const response = await apiClient.get(`/api/travel-plan/results/${encodeURIComponent(resultId)}`)
+  const data = response.data?.data ?? response.data
+  return {
+    success: Boolean(response.data?.success ?? data),
+    message: response.data?.message || 'ok',
+    data,
+  }
+}
+
+export async function listStoredTravelPlans(limit = 100): Promise<StoredTripSummary[]> {
+  const response = await apiClient.get('/api/travel-plan/results', { params: { limit } })
+  return response.data?.items || []
+}
+
+export async function deleteStoredTravelPlan(resultId: string): Promise<void> {
+  await apiClient.delete(`/api/travel-plan/results/${encodeURIComponent(resultId)}`)
 }
 
 export default apiClient
