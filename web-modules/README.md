@@ -1,6 +1,6 @@
 # web-modules
 
-UI modules used by the current EZTrip frontend. They are plain ES modules without a framework build step and are wired into the compiled Vue app by `build.cjs` (it uses acorn to find the component boundaries and refuses to build if the base bundle doesn't match).
+UI modules used by the current RogueTrip frontend. They are plain ES modules without a framework build step and are wired into the compiled Vue app by `build.cjs` (it uses acorn to find the component boundaries and refuses to build if the base bundle doesn't match).
 
 - `stay-planner.js` – accommodation by segment: area first, then a concrete hotel, with a draggable timeline for the nights
 - `budget-ui.js` – travellers / rooms / cars and the cost breakdown, per person and per group

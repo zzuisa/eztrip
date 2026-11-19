@@ -1,10 +1,10 @@
-# EZTrip
+# RogueTrip
 
 Trip planner that turns a few inputs (where from, where to, dates, how you travel, where you sleep, what you like) into a day-by-day itinerary with real routes, opening hours and a cost estimate.
 
-Live: https://ai.roguelife.de (the public UI is branded *RogueTrip*; guests get 3 plans per day)
+Live: https://ai.roguelife.de (guests get 3 plans per day). The repo still has the project's early name, eztrip.
 
-![EZTrip planner](docs/screenshot.png)
+![RogueTrip: Duisburg to Berlin, 3 days](docs/demo.gif)
 
 I started this in spring 2026 from a small agent demo with an Amap backend. Since then most of it has been rewritten: Europe-focused maps (Mapbox + Google Places), Deutsche Bahn data, a review loop for the generated plans and a lot of plain code around the LLM calls so the output can actually be used on a trip.
 
@@ -57,7 +57,7 @@ backend/        FastAPI app
   agent-config/   models, prompts versions and tools per agent role
   tests/
 frontend/       the first Vue 3 client (kept for reference, see below)
-web-modules/    UI modules used by the current production frontend
+web-modules/    UI modules used by the current frontend
 ```
 
 About the frontend: `frontend/` is the original Vue client from the first version. The production UI has moved on since then. The newer parts (stay planner, budget panel, route sync, map camera, Xiaohongshu tips) live in `web-modules/` as plain JS modules and are wired into the built app by `web-modules/build.cjs`.
