@@ -60,7 +60,7 @@ frontend/       Vue 3 + Vite client
 web-modules/    UI modules used by the current frontend
 ```
 
-About the frontend: `frontend/` is the Vue 3 app as of July 2026, when the project moved to a new server. It builds on its own and has its own unit tests (`npm ci && npm test`). Parts added after the move (stay planner, budget panel, route sync, map camera, Xiaohongshu tips) are kept as plain JS modules in `web-modules/` and get wired into the built app by `web-modules/build.cjs`, so the production UI is `frontend/` plus those modules.
+About the frontend: `frontend/` is the Vue 3 app as of July 2026, when the project moved to a new server. It builds on its own and has its own unit tests (`npm ci && npm test`). The live site has a later redesign on top of it. The features added since then (stay planner, budget panel, route sync, map camera, Xiaohongshu tips) are maintained as plain JS modules in `web-modules/` and wired into the built app by `web-modules/build.cjs`.
 
 ## Running the backend
 
