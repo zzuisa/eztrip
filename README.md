@@ -1,212 +1,90 @@
-# HelloAgents智能旅行助手 🌍✈️
+# EZTrip
 
-基于HelloAgents框架构建的智能旅行规划助手,集成高德地图MCP服务,提供个性化的旅行计划生成。
+Trip planner that turns a few inputs (where from, where to, dates, how you travel, where you sleep, what you like) into a day-by-day itinerary with real routes, opening hours and a cost estimate.
 
-## ✨ 功能特点
+Live: https://ai.roguelife.de (the public UI is branded *RogueTrip*; guests get 3 plans per day)
 
-- 🤖 **AI驱动的旅行规划**: 基于HelloAgents框架的SimpleAgent,智能生成详细的多日旅程
-- 🗺️ **高德地图集成**: 通过MCP协议接入高德地图服务,支持景点搜索、路线规划、天气查询
-- 🧠 **智能工具调用**: Agent自动调用高德地图MCP工具,获取实时POI、路线和天气信息
-- 🎨 **现代化前端**: Vue3 + TypeScript + Vite,响应式设计,流畅的用户体验
-- 📱 **完整功能**: 包含住宿、交通、餐饮和景点游览时间推荐
+![EZTrip planner](docs/screenshot.png)
 
-## 🏗️ 技术栈
+I started this in spring 2026 from a small agent demo with an Amap backend. Since then most of it has been rewritten: Europe-focused maps (Mapbox + Google Places), Deutsche Bahn data, a review loop for the generated plans and a lot of plain code around the LLM calls so the output can actually be used on a trip.
 
-### 后端
-- **框架**: HelloAgents (基于SimpleAgent)
-- **API**: FastAPI
-- **MCP工具**: amap-mcp-server (高德地图)
-- **LLM**: 支持多种LLM提供商(OpenAI, DeepSeek等)
+## What it does
 
-### 前端
-- **框架**: Vue 3 + TypeScript
-- **构建工具**: Vite
-- **UI组件库**: Ant Design Vue
-- **地图服务**: 高德地图 JavaScript API
-- **HTTP客户端**: Axios
+- 7-step planner: origin, destination(s), return point, transport mode, dates, accommodation, preferences
+- Multi-city trips, each stop planned separately and then stitched together
+- Route per day on a map, with playback of the legs
+- Accommodation by segment: pick an area first, then a concrete hotel; days are re-ordered around where you sleep
+- Budget for tickets, transport and hotels, per person and for the group. Prices come from a pricing service when available, otherwise they are marked as estimates
+- Intercity route comparison (public transport incl. Deutschlandticket check vs. driving)
+- Opening hours check against the travel dates
+- Deutsche Bahn timetable questions in plain language ("next train from Duisburg to Köln after 18:00")
+- Optional travel tips from Xiaohongshu posts, always shown with their source
+- Guest quota per IP, owner login via htpasswd
 
-## 📁 项目结构
+## How a plan is generated
 
 ```
-helloagents-trip-planner/
-├── backend/                    # 后端服务
-│   ├── app/
-│   │   ├── agents/            # Agent实现
-│   │   │   └── trip_planner_agent.py
-│   │   ├── api/               # FastAPI路由
-│   │   │   ├── main.py
-│   │   │   └── routes/
-│   │   │       ├── trip.py
-│   │   │       └── map.py
-│   │   ├── services/          # 服务层
-│   │   │   ├── amap_service.py
-│   │   │   └── llm_service.py
-│   │   ├── models/            # 数据模型
-│   │   │   └── schemas.py
-│   │   └── config.py          # 配置管理
-│   ├── requirements.txt
-│   ├── .env.example
-│   └── .gitignore
-├── frontend/                   # 前端应用
-│   ├── src/
-│   │   ├── components/        # Vue组件
-│   │   ├── services/          # API服务
-│   │   ├── types/             # TypeScript类型
-│   │   └── views/             # 页面视图
-│   ├── package.json
-│   └── vite.config.ts
-└── README.md
+request ──> supervisor (tool-calling loop)
+              ├─ poi_scout     places via Google Places
+              ├─ food_scout    restaurants near the day's anchors
+              └─ xhs_insight   tips from Xiaohongshu (optional, degrades to nothing)
+         ──> candidate pool, kept server side
+         ──> composer         one LLM call per day, in parallel, strict JSON
+         ──> polish / settle  plain code: meal times, duplicates, first/last leg,
+                              arrival times, car pick-up/return, what doesn't fit
+         ──> critic           separate model scores the whole trip
+         ──> refine           re-plan the days with issues, then review again
+                              (max 3 rounds, stops at score >= 85)
+         ──> budget, weather, images (read-only, don't change the plan)
 ```
 
-## 🚀 快速开始
+A few decisions that came out of things breaking:
 
-### 前提条件
+- The supervisor never writes itinerary JSON. Keeping a 4-5k token JSON intact inside a tool loop failed too often, so it only collects candidates and the composer writes one day at a time.
+- Big objects (candidate lists) stay in a per-request context; the model only sees short summaries. Token use dropped a lot and tool arguments stopped getting mangled.
+- Numbers are not left to the model. Distances, prices, Deutschlandticket eligibility and budget totals are computed in code. The route advisor may only mention amounts that exist in the data, otherwise its text is dropped.
+- Review always runs on the final data. Earlier versions reviewed a draft and then changed it afterwards, which produced reviews that contradicted the delivered plan. Every plan carries a fingerprint; if it changes after review, it gets reviewed again.
+- Generation runs as a background job with an SSE event log, so a closed tab or a dropped connection doesn't lose a 2-minute plan.
 
-- Python 3.10+
-- Node.js 16+
-- 高德地图API密钥 (Web服务API和Web端(JS API))
-- LLM API密钥 (OpenAI/DeepSeek等)
+## Repository layout
 
-### 后端安装
+```
+backend/        FastAPI app
+  app/agents/     supervisor, composer, critic, refine loop, DB router agent
+  app/services/   routing, budget, stays, transit, opening hours, quality score ...
+  app/api/        HTTP + SSE routes
+  app/evals/      offline scoring of saved plans (no model calls)
+  agent-config/   models, prompts versions and tools per agent role
+  tests/
+frontend/       the first Vue 3 client (kept for reference, see below)
+web-modules/    UI modules used by the current production frontend
+```
 
-1. 进入后端目录
+About the frontend: `frontend/` is the original Vue client from the first version. The production UI has moved on since then. The newer parts (stay planner, budget panel, route sync, map camera, Xiaohongshu tips) live in `web-modules/` as plain JS modules and are wired into the built app by `web-modules/build.cjs`.
+
+## Running the backend
+
+Python 3.12+.
+
 ```bash
 cd backend
-```
-
-2. 创建虚拟环境
-```bash
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-```
-
-3. 安装依赖
-```bash
 pip install -r requirements.txt
+cp .env.example .env   # fill in the keys you have
+uvicorn app.api.main:app --port 8881
 ```
 
-4. 配置环境变量
+Needed at minimum: an OpenAI-compatible LLM endpoint, a Mapbox token and a Google Places key. Deutsche Bahn, Xiaohongshu and the pricing/events services are optional and switch off cleanly when not configured. In my setup all model calls go through a LiteLLM proxy, so the model names in `agent-config/agents.yaml` are proxy aliases.
+
+Tests and the eval set:
+
 ```bash
-cp .env.example .env
-# 编辑.env文件,填入你的API密钥
+cd backend
+python -m unittest discover tests
+python -m app.evals --top 8
 ```
 
-5. 启动后端服务
-```bash
-uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
-```
+Or with Docker: `docker build -t eztrip-backend backend/` and mount `.env`, `storage/` and `cache/`.
 
-### 前端安装
+## Not in this repo
 
-1. 进入前端目录
-```bash
-cd frontend
-```
-
-2. 安装依赖
-```bash
-npm install
-```
-
-3. 配置环境变量
-```bash
-# 创建.env文件, 填入高德地图Web API Key 和 Web端JS API Key
-cp .env.example .env
-```
-
-4. 启动开发服务器
-```bash
-npm run dev
-```
-
-5. 打开浏览器访问 `http://localhost:5173`
-
-## 📝 使用指南
-
-1. 在首页填写旅行信息:
-   - 目的地城市
-   - 旅行日期和天数
-   - 交通方式偏好
-   - 住宿偏好
-   - 旅行风格标签
-
-2. 点击"生成旅行计划"按钮
-
-3. 系统将:
-   - 调用HelloAgents Agent生成初步计划
-   - Agent自动调用高德地图MCP工具搜索景点
-   - Agent获取天气信息和路线规划
-   - 整合所有信息生成完整行程
-
-4. 查看结果:
-   - 每日详细行程
-   - 景点信息与地图标记
-   - 交通路线规划
-   - 天气预报
-   - 餐饮推荐
-
-## 🔧 核心实现
-
-### HelloAgents Agent集成
-
-```python
-from hello_agents import SimpleAgent, HelloAgentsLLM
-from hello_agents.tools import MCPTool
-
-# 创建高德地图MCP工具
-amap_tool = MCPTool(
-    name="amap",
-    server_command=["uvx", "amap-mcp-server"],
-    env={"AMAP_MAPS_API_KEY": "your_api_key"},
-    auto_expand=True
-)
-
-# 创建旅行规划Agent
-agent = SimpleAgent(
-    name="旅行规划助手",
-    llm=HelloAgentsLLM(),
-    system_prompt="你是一个专业的旅行规划助手..."
-)
-
-# 添加工具
-agent.add_tool(amap_tool)
-```
-
-### MCP工具调用
-
-Agent可以自动调用以下高德地图MCP工具:
-- `maps_text_search`: 搜索景点POI
-- `maps_weather`: 查询天气
-- `maps_direction_walking_by_address`: 步行路线规划
-- `maps_direction_driving_by_address`: 驾车路线规划
-- `maps_direction_transit_integrated_by_address`: 公共交通路线规划
-
-## 📄 API文档
-
-启动后端服务后,访问 `http://localhost:8000/docs` 查看完整的API文档。
-
-主要端点:
-- `POST /api/trip/plan` - 生成旅行计划
-- `GET /api/map/poi` - 搜索POI
-- `GET /api/map/weather` - 查询天气
-- `POST /api/map/route` - 规划路线
-
-## 🤝 贡献指南
-
-欢迎提交Pull Request或Issue!
-
-## 📜 开源协议
-
-CC BY-NC-SA 4.0
-
-## 🙏 致谢
-
-- [HelloAgents](https://github.com/datawhalechina/Hello-Agents) - 智能体教程
-- [HelloAgents框架](https://github.com/jjyaoao/HelloAgents) - 智能体框架
-- [高德地图开放平台](https://lbs.amap.com/) - 地图服务
-- [amap-mcp-server](https://github.com/sugarforever/amap-mcp-server) - 高德地图MCP服务器
-
----
-
-**HelloAgents智能旅行助手** - 让旅行计划变得简单而智能 🌈
-
+The pricing service (hotel quotes, FlixBus/DB prices, route comparison), the local events service and the deployment config run as separate services in my homelab. The DB timetable tools are based on [jorekai/db-timetable-mcp](https://github.com/jorekai/db-timetable-mcp).

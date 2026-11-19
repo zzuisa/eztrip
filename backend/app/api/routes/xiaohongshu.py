@@ -1,14 +1,17 @@
 """小红书 MCP 代理接口"""
 
+import asyncio
+
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
+from ...services.guest_guard import require_owner
 from ...config import get_settings
 from ...services.xiaohongshu_service import get_xiaohongshu_service
 
-router = APIRouter(prefix="/xhs", tags=["小红书"])
+router = APIRouter(prefix="/xhs", tags=["小红书"], dependencies=[Depends(require_owner)])
 
 
 class XhsSearchFilters(BaseModel):
@@ -69,7 +72,7 @@ async def search_feeds(req: XhsSearchRequest):
     try:
         service = get_xiaohongshu_service()
         filters = req.filters.model_dump() if req.filters else None
-        result = service.search_feeds(keyword=req.keyword, filters=filters)
+        result = await asyncio.to_thread(service.search_feeds, keyword=req.keyword, filters=filters)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
@@ -103,7 +106,7 @@ async def feed_detail(req: XhsFeedDetailRequest):
 
     try:
         service = get_xiaohongshu_service()
-        result = service.get_feed_detail(
+        result = await asyncio.to_thread(service.get_feed_detail,
             feed_id=req.feed_id,
             xsec_token=req.xsec_token,
             load_all_comments=req.load_all_comments,
@@ -117,27 +120,15 @@ async def feed_detail(req: XhsFeedDetailRequest):
         raise HTTPException(status_code=500, detail=f"获取详情失败: {str(e)}")
 
 
-@router.get(
-    "/health",
-    summary="小红书服务健康检查",
-    description="仅检查配置是否启用，并返回 MCP 基础地址。",
-    responses={
-        200: {
-            "description": "服务信息",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "enabled": True,
-                        "base_url": "http://127.0.0.1:18060",
-                    }
-                }
-            },
-        }
-    },
-)
+@router.get("/health", summary="小红书网关与账号状态")
 async def xhs_health():
     settings = get_settings()
-    return {
-        "enabled": bool(getattr(settings, "enable_xiaohongshu_mcp", False)),
-        "base_url": getattr(settings, "xiaohongshu_mcp_base_url", ""),
-    }
+    enabled = bool(getattr(settings, "enable_xiaohongshu_mcp", False))
+    status = {"enabled": enabled, "provider": "litellm/xiaohongshu", "read_only": True}
+    if not enabled:
+        return {**status, "status": "disabled"}
+    try:
+        login = await asyncio.to_thread(get_xiaohongshu_service().check_login_status)
+        return {**status, "status": "ready" if login["is_logged_in"] else "login_required", **login}
+    except Exception as error:
+        return {**status, "status": "unavailable", "reason": getattr(error, "code", "unavailable"), "message": "小红书状态暂时无法确认，请检查账号或网关权限"}

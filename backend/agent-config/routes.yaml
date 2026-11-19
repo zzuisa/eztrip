@@ -1,0 +1,15 @@
+version: 1
+
+routes:
+  planning:
+    agent: planner
+  realtime_search:
+    agent: researcher
+  validation:
+    agent: critic
+  final_output:
+    agent: formatter
+  tool_call:
+    agent: tool-executor
+  route_compare:
+    agent: route_advisor

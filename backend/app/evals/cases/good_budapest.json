@@ -1,0 +1,151 @@
+{
+ "location": "Budapest",
+ "days": 2,
+ "trip_meta": {
+  "start_date": "2026-11-03"
+ },
+ "attractions": [
+  {
+   "name": "National Museum",
+   "hours": {
+    "p": [
+     [
+      1,
+      600,
+      1,
+      1080
+     ],
+     [
+      2,
+      600,
+      2,
+      1080
+     ],
+     [
+      3,
+      600,
+      3,
+      1080
+     ],
+     [
+      4,
+      600,
+      4,
+      1080
+     ],
+     [
+      5,
+      600,
+      5,
+      1080
+     ],
+     [
+      6,
+      600,
+      6,
+      1080
+     ]
+    ]
+   }
+  }
+ ],
+ "itinerary": [
+  {
+   "day": 1,
+   "activities": [
+    {
+     "name": "National Museum",
+     "time": "10:00-12:00",
+     "latitude": 47.5,
+     "longitude": 19.05,
+     "image_url": "/img/x",
+     "address": "x"
+    },
+    {
+     "name": "Danube Promenade",
+     "time": "14:00-15:30",
+     "latitude": 47.504,
+     "longitude": 19.053,
+     "image_url": "/img/x",
+     "address": "x"
+    }
+   ],
+   "meals": [
+    {
+     "type": "breakfast",
+     "name": "Cafe A",
+     "time": "08:30-09:15",
+     "latitude": 47.5,
+     "longitude": 19.05,
+     "image_url": "/img/x"
+    },
+    {
+     "type": "lunch",
+     "name": "Bistro B",
+     "time": "12:15-13:30",
+     "latitude": 47.5,
+     "longitude": 19.05,
+     "image_url": "/img/x"
+    },
+    {
+     "type": "dinner",
+     "name": "Dinner C",
+     "time": "18:45-20:00",
+     "latitude": 47.5,
+     "longitude": 19.05,
+     "image_url": "/img/x"
+    }
+   ]
+  },
+  {
+   "day": 2,
+   "activities": [
+    {
+     "name": "Castle Hill",
+     "time": "10:00-12:00",
+     "latitude": 47.5,
+     "longitude": 19.05,
+     "image_url": "/img/x",
+     "address": "x"
+    },
+    {
+     "name": "Fisherman Bastion",
+     "time": "14:00-15:00",
+     "latitude": 47.504,
+     "longitude": 19.053,
+     "image_url": "/img/x",
+     "address": "x"
+    }
+   ],
+   "meals": [
+    {
+     "type": "lunch",
+     "name": "Bistro D",
+     "time": "12:30-13:30",
+     "latitude": 47.5,
+     "longitude": 19.05,
+     "image_url": "/img/x"
+    },
+    {
+     "type": "dinner",
+     "name": "Dinner E",
+     "time": "19:00-20:15",
+     "latitude": 47.5,
+     "longitude": 19.05,
+     "image_url": "/img/x"
+    }
+   ]
+  }
+ ],
+ "warnings": [],
+ "expect": {
+  "min_score": 95,
+  "no": [
+   "closed_day",
+   "overlap",
+   "meal_window",
+   "dup_place",
+   "empty_day"
+  ]
+ }
+}

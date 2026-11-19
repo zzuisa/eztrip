@@ -1,22 +1,90 @@
 """交通查询API路由"""
 
+import asyncio
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...models.schemas import (
     DbNlqRequest,
     DbNlqResponse,
+    DbTripQueryRequest,
 )
+from ...services.guest_guard import client_ip, get_quota, guest_quota_dependency, is_owner
 from ...services.deutsche_bahn_service import get_deutsche_bahn_service
-from ...agents.db_nlq import parse_nlq_to_trip_query_with_time_filter
+from ...tools.db.nlq_parser import now_berlin, parse_plan
+from ...tools.db.searcher import DbUnavailable, OutOfWindow, StationNotFound
 from ...tools.db.debug import db_log, DbTimer
 
 router = APIRouter(prefix="/transport", tags=["交通服务"])
 
+POLICY_VERSION = "2.0.0"
+
+
+def _run_nlq(req: DbNlqRequest, request_id: str) -> DbNlqResponse:
+    plan = parse_plan(req.query, request_id=request_id)
+    db_log(request_id, "nlq_parsed_obj", plan.__dict__)
+    miss = [n for n, v in (("出发地", plan.origin), ("目的地", plan.destination)) if not v.strip()]
+    if miss:
+        return DbNlqResponse(
+            success=False,
+            code="clarify",
+            message=f"请补充{'、'.join(miss)}，例如：'明天 9 点 Frankfurt Hbf 到 Berlin Hbf' 或 '现在 杜塞到杜堡'",
+            data=[],
+            policy_version=POLICY_VERSION,
+        )
+
+    now = now_berlin()
+    if plan.time_mode == "scheduled" and plan.date and plan.hour:
+        start = datetime.strptime(f"{plan.date}{plan.hour}{plan.minute or '00'}", "%y%m%d%H%M")
+    else:
+        start = now
+    regional = req.regional_only if req.regional_only is not None else (plan.regional_only if plan.regional_only is not None else True)
+
+    service = get_deutsche_bahn_service()
+    try:
+        res = service.search_trips(
+            origin=plan.origin, destination=plan.destination, start=start, limit=plan.limit, regional_only=regional,
+            auto_widen=(req.regional_only is None and plan.regional_only is None),
+        )
+    except StationNotFound as e:
+        return DbNlqResponse(success=False, code="no_station", message=f"{e}。请换个写法，例如带上 Hbf 或使用德文站名。", data=[], policy_version=POLICY_VERSION)
+    except OutOfWindow as e:
+        return DbNlqResponse(success=False, code="out_of_window", message=f"{e}。请改查近期车次，更远的日期请到 DB Navigator 确认。", data=[], policy_version=POLICY_VERSION)
+
+    parsed = DbTripQueryRequest(
+        origin=res.origin.name if res.origin else plan.origin,
+        destination=res.destination.name if res.destination else plan.destination,
+        date=start.strftime("%y%m%d"),
+        hour=start.strftime("%H"),
+        minute=start.strftime("%M"),
+        time_mode=plan.time_mode or "now",
+        language="de",
+    )
+    stations = None
+    if res.origin and res.destination:
+        stations = {
+            "origin": {"name": res.origin.name, "eva": res.origin.evas[0]},
+            "destination": {"name": res.destination.name, "eva": res.destination.evas[0]},
+        }
+    return DbNlqResponse(
+        success=True,
+        code="ok",
+        message="查询成功" if res.trips else "没有找到车次",
+        parsed=parsed,
+        data=res.trips,
+        policy_version=POLICY_VERSION,
+        notes=res.notes,
+        filtered_out=res.filtered_out,
+        regional_only=res.regional_only,
+        stations=stations,
+    )
+
 
 @router.post(
     "/db/nlq",
+    dependencies=[Depends(guest_quota_dependency("nlq"))],
     response_model=DbNlqResponse,
     summary="自然语言查询德铁车次",
     response_description="返回解析结果与车次列表，或返回澄清信息",
@@ -73,42 +141,30 @@ router = APIRouter(prefix="/transport", tags=["交通服务"])
         500: {"description": "自然语言查询失败"},
     },
 )
-async def nlq_db_trips(req: DbNlqRequest):
+async def nlq_db_trips(req: DbNlqRequest, request: Request):
     request_id = uuid.uuid4().hex[:8]
-    timer = DbTimer(request_id)
     db_log(request_id, "nlq_request", {"query": req.query})
+    owner = is_owner(request)
+    ip = client_ip(request)
+
+    def refund():
+        if not owner:
+            get_quota().refund("nlq", ip)
+
     try:
-        parsed, min_departure_time, timetable_tool_override, limit, month_ticket_only, clarification, policy_version = (
-            parse_nlq_to_trip_query_with_time_filter(req.query)
-        )
-        if clarification:
-            return DbNlqResponse(
-                success=False,
-                message=clarification,
-                parsed=None,
-                data=[],
-                policy_version=policy_version,
-            )
-        timer.mark("nlq_parsed")
-        db_log(request_id, "nlq_parsed_obj", parsed.model_dump())
-        service = get_deutsche_bahn_service()
-        trips = service.query_trips(
-            origin=parsed.origin,
-            destination=parsed.destination,
-            date=parsed.date,
-            hour=parsed.hour,
-            language=parsed.language,
-            min_departure_time=min_departure_time,
-            timetable_tool_override=timetable_tool_override,
-            limit=limit,
-            month_ticket_only=month_ticket_only,
-        )
-        timer.mark("nlq_trips_done")
-        db_log(request_id, "nlq_trips_count", {"count": len(trips)})
-        return DbNlqResponse(success=True, message="查询成功", parsed=parsed, data=trips, policy_version=policy_version)
-    except Exception as e:
+        out = await asyncio.to_thread(_run_nlq, req, request_id)
+        if not out.success:
+            refund()  # 没有真正查询的澄清/无站点不扣游客额度
+        return out
+    except DbUnavailable as e:
+        refund()
         db_log(request_id, "nlq_error", str(e))
-        raise HTTPException(status_code=500, detail=f"自然语言查询失败: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"德铁数据源暂时不可用，请稍后再试（{e}）")
+    except Exception as e:
+        refund()
+        db_log(request_id, "nlq_error", str(e))
+        print(f"[db-nlq] error {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"自然语言查询失败: {type(e).__name__}")
 
 
 @router.get(
@@ -122,4 +178,5 @@ async def transport_health():
         return {"status": "healthy", "service": "transport-service"}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"服务不可用: {str(e)}")
+
 

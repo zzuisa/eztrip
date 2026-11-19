@@ -3,11 +3,11 @@
 import os
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from ..config import get_settings, validate_config, print_config
 from ..tools.debug_trace import set_debug_trace
-from .routes import poi, map as map_routes, transport, xiaohongshu, travel_plan
+from .routes import weather, poi, map as map_routes, transport, xiaohongshu, travel_plan, place_chat, chat_history, route_legs, trip_story, itinerary_edit, place_details, stay, settings_models, geo, fun, fun_chat, feedback, route_compare
 
 # Ensure UTF-8 output on Windows so hello_agents debug logs (emoji) won't crash.
 # This needs to run before any MCPTool initialization or emoji printing.
@@ -67,6 +67,20 @@ app.include_router(map_routes.router, prefix="/api")
 app.include_router(transport.router, prefix="/api")
 app.include_router(xiaohongshu.router, prefix="/api")
 app.include_router(travel_plan.router, prefix="/api")
+app.include_router(place_chat.router, prefix="/api")
+app.include_router(chat_history.router, prefix="/api")
+app.include_router(route_legs.router, prefix="/api")
+app.include_router(trip_story.router, prefix="/api")
+app.include_router(itinerary_edit.router, prefix="/api")
+app.include_router(place_details.router, prefix="/api")
+app.include_router(stay.router, prefix="/api")
+app.include_router(settings_models.router, prefix="/api")
+app.include_router(geo.router, prefix="/api")
+app.include_router(weather.router, prefix="/api")
+app.include_router(fun.router, prefix="/api")
+app.include_router(fun_chat.router, prefix="/api")
+app.include_router(feedback.router, prefix="/api")
+app.include_router(route_compare.router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -128,6 +142,29 @@ async def health():
         "service": settings.app_name,
         "version": settings.app_version
     }
+
+
+@app.get(
+    "/api/session",
+    summary="当前访问身份与游客额度",
+    description="返回是否为站长（Nginx 校验过 Basic 凭据）以及游客剩余额度，供前端展示与提示。",
+)
+async def session_info(request: Request):
+    from ..services import guest_guard as gg
+
+    owner = gg.is_owner(request)
+    lim = gg.limits()
+    info = {"owner": owner}
+    if not owner:
+        ip = gg.client_ip(request)
+        quota = gg.get_quota()
+        info["quota"] = {
+            "gen": quota.status("gen", ip, lim["gen"]),
+            "nlq": quota.status("nlq", ip, lim["nlq"]),
+            "chat": quota.status("chat", ip, lim["chat"]),
+            "aiedit": quota.status("aiedit", ip, lim["aiedit"]),
+        }
+    return info
 
 
 if __name__ == "__main__":

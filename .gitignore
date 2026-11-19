@@ -19,7 +19,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.cursor/mcp.json
 # 虚拟环境
 venv/
 env/
@@ -49,3 +48,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+
+# Node
+node_modules/
+logs/
+storage/
+cache/

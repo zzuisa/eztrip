@@ -1,0 +1,17 @@
+version: 1
+
+defaults:
+  timeout_seconds: 30
+  max_retries: 1
+  failure_mode: report_and_continue
+
+tools:
+  search-rail:
+    enabled: true
+    timeout_seconds: 30
+  search-places:
+    enabled: true
+    timeout_seconds: 20
+  search-xiaohongshu:
+    enabled: false
+    timeout_seconds: 20

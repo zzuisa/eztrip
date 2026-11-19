@@ -1,0 +1,61 @@
+version: 1
+
+agents:
+  planner:
+    description: 拆解用户目标并形成可执行的旅行计划
+    model: travel-reasoning
+    prompt_version: planner.v1
+    temperature: 0.2
+    max_tokens: 4096
+    tools: [search-rail, search-places]
+
+  researcher:
+    description: 查询实时交通、地点和可用性信息
+    model: travel-tool
+    prompt_version: researcher.v1
+    temperature: 0.1
+    max_tokens: 3072
+    tools: [search-rail, search-places, search-xiaohongshu]
+
+  critic:
+    description: 检查时间、预算、路线和工具结果的一致性
+    # 审核用更强的模型，经 LiteLLM 别名 ocx-main 路由（带故障转移）
+    model: ocx-main
+    prompt_version: critic.v1
+    temperature: 0.0
+    max_tokens: 3072
+    tools: []
+    # 审核—修订闭环：审核 → 带着意见重排有问题的天 → 复审，最多 max_rounds 次重排；评分达到 target_score 且无硬伤即交付。
+    # 单日行程也审核（min_days: 1）；每轮最多重排 max_revisions 天；整个闭环总时长不超过 total_timeout_seconds（超时按当前最好的一版交付）。
+    # 审核失败/超时则跳过（report_and_continue）。
+    min_days: 1
+    max_revisions: 6
+    max_rounds: 3
+    target_score: 85
+    timeout_seconds: 90
+    total_timeout_seconds: 200
+
+  formatter:
+    description: 将已验证结果整理成用户可读的行程
+    model: travel-fast
+    prompt_version: formatter.v1
+    temperature: 0.2
+    max_tokens: 4096
+    tools: []
+
+  tool-executor:
+    description: 执行受控工具调用并返回结构化结果
+    model: travel-tool
+    prompt_version: tool-executor.v1
+    temperature: 0.0
+    max_tokens: 2048
+    tools: [search-rail, search-places, search-xiaohongshu]
+
+  route_advisor:
+    description: 城际路线对比的取舍说明（价格/月票判定由 travel_prices MCP 的代码算好，模型只解释，输出金额须能在数据里对上，否则回退规则文案）
+    model: travel-fast
+    prompt_version: route_advisor.v1
+    temperature: 0.2
+    max_tokens: 300
+    timeout_seconds: 25
+    tools: []

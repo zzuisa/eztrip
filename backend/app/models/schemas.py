@@ -1,7 +1,7 @@
 """数据模型定义"""
 
-from typing import List, Optional, Union
-from pydantic import BaseModel, Field, field_validator
+from typing import Any, Dict, List, Literal, Optional, Union
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ============ 请求模型 ============
@@ -62,6 +62,58 @@ class DbTripQueryRequest(BaseModel):
     date: str = Field(..., description="日期 YYMMDD", example="260402")
     hour: str = Field(..., description="小时 HH", example="14")
     language: str = Field(default="de", description="语言")
+    minute: str = Field(default="00", description="分钟 mm")
+    time_mode: str = Field(default="scheduled", description="now | scheduled")
+
+
+class TripSegment(BaseModel):
+    """多城市串联行程的一站。"""
+    city: str = Field(..., min_length=1, max_length=30, description="这一站的城市")
+    days: int = Field(default=2, ge=1, le=15, description="在这一站玩几天")
+
+
+class TripFocus(BaseModel):
+    """生成前的主题引导选择：深度 / 主题+精华 / 精华一览。"""
+    mode: Literal["deep", "mix", "sample"] = Field(..., description="deep 主题深度 | mix 主题+精华 | sample 精华一览")
+    tags: List[str] = Field(default_factory=list, max_length=3, description="所选主题（≤3，如 购物）")
+    refine: List[str] = Field(default_factory=list, max_length=4, description="细化方向（如 品牌折扣）")
+
+
+class JourneyPoint(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+class NightStay(JourneyPoint):
+    night: int = Field(ge=1, le=14)
+    kind: Literal['hotel', 'area'] = 'hotel'
+
+
+class DayWindow(BaseModel):
+    day: int = Field(ge=1, le=15)
+    start: str = Field(default='09:00', pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
+    end: str = Field(default='21:00', pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
+
+    @model_validator(mode='after')
+    def ordered(self):
+        if self.start >= self.end:
+            raise ValueError('每天结束时间须晚于开始时间；跨夜交通单独安排')
+        return self
+
+
+class RentalChoice(BaseModel):
+    provider: Literal['sixt', 'europcar', 'hertz'] = 'sixt'
+    daily_eur: Optional[float] = Field(default=None, gt=0, le=5000, allow_inf_nan=False)
+
+
+class DiningPreferences(BaseModel):
+    cuisines: List[Literal['local','chinese','french','italian','japanese','korean','vegetarian','any']] = Field(default_factory=lambda:['local'],max_length=3)
+
+
+class ExperiencePreferences(BaseModel):
+    mode: Literal['balanced','culture','playful','relax'] = 'balanced'
+    interests: List[Literal['spa','skiing','skating','markets','live_show','local_craft','cruise','nature','family']] = Field(default_factory=list,max_length=5)
 
 
 class TravelPlanRequest(BaseModel):
@@ -69,6 +121,60 @@ class TravelPlanRequest(BaseModel):
     location: str = Field(..., description="模糊地点/国家/城市", example="法国")
     days: int = Field(default=3, ge=1, le=15, description="旅行天数", example=3)
     preferences: Optional[str] = Field(default="博物馆/美食/预算中等", description="偏好说明", example="博物馆/美食/预算中等")
+    # 日期与交通也参与天气约束、行程编排和审核。
+    start_date: Optional[str] = Field(default=None, max_length=10, description="开始日期 YYYY-MM-DD")
+    end_date: Optional[str] = Field(default=None, max_length=10, description="结束日期 YYYY-MM-DD")
+    transportation: Optional[str] = Field(default=None, max_length=20, description="交通方式偏好")
+    accommodation: Optional[str] = Field(default=None, max_length=20, description="住宿偏好")
+    origin: Optional[str] = Field(default=None, max_length=120, description="出发地（地址/地名，默认当前位置）")
+    origin_lat: Optional[float] = Field(default=None, ge=-90, le=90, description="出发地纬度")
+    origin_lng: Optional[float] = Field(default=None, ge=-180, le=180, description="出发地经度")
+    destination_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    destination_lng: Optional[float] = Field(default=None, ge=-180, le=180)
+    return_point: Optional[JourneyPoint] = None
+    driving_strategy: Literal['direct', 'park_ride'] = 'direct'
+    parking_point: Optional[JourneyPoint] = None
+    rental: Optional[RentalChoice] = None
+    stays: List[NightStay] = Field(default_factory=list, max_length=14)
+    day_windows: List[DayWindow] = Field(default_factory=list, max_length=15)
+    longhaul_timing: Literal['balanced', 'day', 'overnight'] = 'balanced'
+    experience: ExperiencePreferences = Field(default_factory=ExperiencePreferences)
+    dining: DiningPreferences = Field(default_factory=DiningPreferences)
+    longhaul_mode: Literal['ground','flight','auto'] = 'ground'
+    travelers: int = Field(default=1, ge=1, le=20)
+    rooms: Optional[int] = Field(default=None, ge=1, le=20)
+    vehicle_count: Optional[int] = Field(default=None, ge=1, le=20)
+
+    @model_validator(mode='after')
+    def validate_journey(self):
+        if self.rooms and self.rooms > self.travelers:
+            raise ValueError('房间数不能超过同行人数')
+        if self.vehicle_count and any(x in (self.transportation or '') for x in ('自驾','开车','租车','驾车')) and self.vehicle_count*5 < self.travelers:
+            raise ValueError('车辆暂按5座估算，请增加车辆数量')
+        total = sum(s.days for s in self.segments) if self.segments else self.days
+        from datetime import date
+        start = date.fromisoformat(self.start_date) if self.start_date else None
+        end = date.fromisoformat(self.end_date) if self.end_date else None
+        if start and end and ((end-start).days < 0 or (end-start).days+1 != total):
+            raise ValueError('出行日期范围须与行程总天数一致')
+        if end and not start:
+            raise ValueError('请同时提供开始日期')
+        for entries, key, limit in ((self.stays, 'night', total - 1), (self.day_windows, 'day', total)):
+            values = [getattr(x, key) for x in entries]
+            if len(set(values)) != len(values) or any(x > limit for x in values):
+                raise ValueError('住宿晚数或每日时间与行程天数不一致')
+        if self.driving_strategy == 'park_ride':
+            if not self.parking_point or not any(x in (self.transportation or '') for x in ('自驾', '开车')):
+                raise ValueError('停车换乘需要选择自驾方式和具体停车点')
+        if self.rental and '租车' not in (self.transportation or ''):
+            raise ValueError('租车报价只能用于租车自驾行程')
+        return self
+    scope_confirmed: bool = Field(default=False, description="用户已在二次提问中确认范围（国家级输入可跳过提示）")
+    stay_name: Optional[str] = Field(default=None, max_length=120, description="预选住宿（酒店名/地址）；为空表示还没定")
+    stay_lat: Optional[float] = Field(default=None, ge=-90, le=90, description="住宿纬度")
+    stay_lng: Optional[float] = Field(default=None, ge=-180, le=180, description="住宿经度")
+    segments: Optional[List[TripSegment]] = Field(default=None, max_length=4, description="多城市串联：按顺序的各站；为空表示单一目的地")
+    focus: Optional[TripFocus] = Field(default=None, description="主题引导选择（单目的地）；服务端转成一句约束追加进 preferences")
 
 
 # ============ 响应模型 ============
@@ -228,6 +334,7 @@ class DbStation(BaseModel):
     latitude: Optional[float] = Field(default=None, description="纬度")
     longitude: Optional[float] = Field(default=None, description="经度")
     distance: Optional[int] = Field(default=None, description="距离(米)")
+    alt_ids: List[str] = Field(default_factory=list, description="关联 EVA（如 Hbf tief 对应的地面站）")
 
 
 class DbTrip(BaseModel):
@@ -239,6 +346,15 @@ class DbTrip(BaseModel):
     arrival_time: str = Field(default="", description="到达时间")
     platform: str = Field(default="", description="站台")
     status: str = Field(default="", description="状态")
+    actual_departure_time: str = Field(default="", description="实时出发 YYMMDDHHmm（有变更时）")
+    actual_arrival_time: str = Field(default="", description="实时到达 YYMMDDHHmm（有变更时）")
+    platform_changed: bool = Field(default=False, description="站台是否变更")
+    delay_min: int = Field(default=0, description="出发晚点分钟")
+    arrival_delay_min: int = Field(default=0, description="到达晚点分钟")
+    duration_min: Optional[int] = Field(default=None, description="行程分钟（按计划）")
+    direction: str = Field(default="", description="终点方向")
+    stops_between: int = Field(default=0, description="途中经停数")
+    category: str = Field(default="", description="车种 ICE/IC/RE/RB/S")
 
 
 class DbStationSearchResponse(BaseModel):
@@ -258,6 +374,7 @@ class DbTripQueryResponse(BaseModel):
 class DbNlqRequest(BaseModel):
     """自然语言查询请求"""
     query: str = Field(..., description="用户自然语言提问", example="帮我查 2026-04-02 14点 Frankfurt Hbf 到 Berlin Hbf 的车次")
+    regional_only: Optional[bool] = Field(default=None, description="覆盖口径：true 仅 RE/RB/S；false 含 ICE/IC")
 
 
 class DbNlqResponse(BaseModel):
@@ -267,6 +384,11 @@ class DbNlqResponse(BaseModel):
     parsed: Optional[DbTripQueryRequest] = Field(default=None, description="解析出的结构化查询")
     data: List[DbTrip] = Field(default=[], description="车次列表")
     policy_version: Optional[str] = Field(default=None, description="服务端策略版本")
+    notes: List[str] = Field(default_factory=list, description="结果说明（过滤、直达限制等）")
+    filtered_out: int = Field(default=0, description="因口径被隐藏的长途车次数")
+    regional_only: bool = Field(default=True, description="本次是否仅区域车")
+    stations: Optional[dict] = Field(default=None, description="解析到的站点 {origin:{name,eva}, destination:{...}}")
+    code: Optional[str] = Field(default=None, description="clarify | no_station | unavailable | ok")
 
 
 class TravelPlanAttraction(BaseModel):
@@ -293,6 +415,9 @@ class TravelPlanMeal(BaseModel):
     address: Optional[str] = Field(default=None, description="地址")
     latitude: Optional[float] = Field(default=None, description="纬度")
     longitude: Optional[float] = Field(default=None, description="经度")
+    place_id: Optional[str] = Field(default=None, description="地点ID")
+
+    xhs_sources: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TravelPlanActivity(BaseModel):
@@ -306,6 +431,15 @@ class TravelPlanActivity(BaseModel):
     address: Optional[str] = Field(default=None, description="地址")
     latitude: Optional[float] = Field(default=None, description="纬度")
     longitude: Optional[float] = Field(default=None, description="经度")
+    preference_matched: bool = Field(default=False, description="是否由用户偏好驱动")
+    preference_reason: Optional[str] = Field(default=None, description="偏好匹配说明")
+    experience_category: Optional[str] = None
+    source_url: Optional[str] = None
+    seasonality_note: Optional[str] = None
+    suggested_stay_minutes: Optional[int] = None
+    open_hint: Optional[str] = Field(default=None, description="当天营业时间（如 周二 10:00-18:00），仅在数据确定时有")
+
+    xhs_sources: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TravelPlanDay(BaseModel):
@@ -319,11 +453,13 @@ class TravelPlanDay(BaseModel):
 
 class TravelPlanBudget(BaseModel):
     """预算估算"""
-    transport: int = Field(..., description="交通预算")
-    tickets: int = Field(..., description="门票预算")
-    food: int = Field(..., description="餐饮预算")
-    total: int = Field(..., description="总预算")
+    transport: float = Field(..., description="交通预算")
+    tickets: float = Field(..., description="门票预算")
+    food: float = Field(..., description="餐饮预算")
+    lodging: float = Field(default=0, description="住宿预算（0=未计入）")
+    total: float = Field(..., description="总预算")
     currency: str = Field(default="EUR", description="货币")
+    detail: Optional[Dict[str, Any]] = Field(default=None, description="预算明细与来源（每日、交通、住宿；旧行程没有）")
 
 
 class TravelPlanData(BaseModel):
@@ -335,6 +471,7 @@ class TravelPlanData(BaseModel):
     total_budget: TravelPlanBudget
     tips: List[str]
     warnings: List[str] = Field(default_factory=list)
+    review: Optional[Dict[str, Any]] = Field(default=None, description="多天行程的独立审核结果（combo/main）")
 
 
 class TravelPlanResponseV2(BaseModel):

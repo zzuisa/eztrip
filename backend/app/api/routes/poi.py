@@ -1,10 +1,14 @@
 """POI相关API路由"""
 
-from fastapi import APIRouter, HTTPException
+import asyncio
+
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from ...services.guest_guard import require_owner, is_owner, client_ip, get_quota, limits as guest_limits
 from ...services.amap_service import get_amap_service
-from ...services.unsplash_service import get_unsplash_service
+from ...services.poi_image_service import get_poi_image_service, make_key
 
 router = APIRouter(prefix="/poi", tags=["POI"])
 
@@ -18,6 +22,7 @@ class POIDetailResponse(BaseModel):
 
 @router.get(
     "/detail/{poi_id}",
+    dependencies=[Depends(require_owner)],
     response_model=POIDetailResponse,
     summary="获取POI详情",
     description="根据POI ID获取详细信息,包括图片"
@@ -54,6 +59,7 @@ async def get_poi_detail(poi_id: str):
 
 @router.get(
     "/search",
+    dependencies=[Depends(require_owner)],
     summary="搜索POI",
     description="根据关键词搜索POI"
 )
@@ -88,42 +94,55 @@ async def search_poi(keywords: str, city: str = "北京"):
 
 @router.get(
     "/photo",
-    summary="获取景点图片",
-    description="根据景点名称从Unsplash获取图片"
+    summary="获取地点图片（Google Places → Wikipedia → Unsplash → 兜底）",
+    description="返回本站代理的图片地址；未命中缓存的请求对游客计入 img 配额，超额只给兜底图（不报错）",
 )
-async def get_attraction_photo(name: str):
-    """
-    获取景点图片
+async def get_attraction_photo(
+    request: Request,
+    name: str = Query(..., min_length=1, max_length=120),
+    city: str = Query("", max_length=80),
+    address: str = Query("", max_length=200),
+    lat: Optional[float] = Query(None, ge=-90, le=90),
+    lng: Optional[float] = Query(None, ge=-180, le=180),
+    kind: str = Query("attraction", max_length=16),
+):
+    svc = get_poi_image_service()
+    kind = kind if kind in ("attraction", "meal", "hotel") else "attraction"
+    key = make_key(name, lat, lng, kind)
+    allow_remote = True
+    if not svc.is_cached(key):
+        lim = guest_limits()
+        try:
+            if not is_owner(request):
+                get_quota().consume("img", client_ip(request), lim["img"])
+            get_quota().consume("img_all", "all", lim["img_all"])  # 站长也受全站总闸约束，防止异常循环烧额度
+        except HTTPException:
+            allow_remote = False  # 超额：降级为兜底图，不打断页面
+    res = await asyncio.to_thread(
+        svc.resolve, name, city=city, address=address, lat=lat, lng=lng, kind=kind, allow_remote=allow_remote
+    )
+    meta = svc._read_meta(res["key"]) or {}
+    return {
+        "success": True,
+        "message": "获取图片成功",
+        "data": {
+            "name": name,
+            "photo_url": res["url"],
+            "source": res["source"],
+            "credit": meta.get("credit", ""),
+            "link": meta.get("link", ""),
+        },
+    }
 
-    Args:
-        name: 景点名称
 
-    Returns:
-        图片URL
-    """
-    try:
-        unsplash_service = get_unsplash_service()
-
-        # 搜索景点图片
-        photo_url = unsplash_service.get_photo_url(f"{name}")
-
-        if not photo_url:
-            # 如果没找到,尝试只用景点名称搜索
-            photo_url = unsplash_service.get_photo_url(name)
-
-        return {
-            "success": True,
-            "message": "获取图片成功",
-            "data": {
-                "name": name,
-                "photo_url": photo_url
-            }
-        }
-
-    except Exception as e:
-        print(f"❌ 获取景点图片失败: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取景点图片失败: {str(e)}"
-        )
-
+@router.get("/photo/img/{key}", summary="读取已缓存的地点图片")
+async def get_cached_photo(key: str):
+    found = get_poi_image_service().file_for(key)
+    if not found:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    path, mime = found
+    return FileResponse(
+        path,
+        media_type=mime,
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-Content-Type-Options": "nosniff"},
+    )

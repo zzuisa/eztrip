@@ -1,0 +1,20 @@
+const statuses={empty:'暂未找到与这个地点直接相关的攻略。',disabled:'小红书攻略暂未启用。',quota:'今天的攻略查询额度已用完，已缓存的内容仍可查看。',busy:'攻略查询较忙，请稍后再试。',login_required:'小红书账号需要重新登录，地点和导航仍可使用。',verification_required:'小红书暂需账号验证，稍后再来看攻略。',expired:'这份攻略缓存已过期，重新打开地点可更新。'};
+const metric=v=>Number.isFinite(v)?v.toLocaleString('zh-CN'):'未提供';
+export function createPlaceNotes(h,api){return {name:'PlaceNotes',props:['resultId','item'],data(){return {loading:true,report:null,previews:{},reading:{},abort:null,dead:false}},mounted(){this.load()},beforeUnmount(){this.dead=true;this.abort?.abort()},methods:{
+ params(){return {name:this.item.name,day:this.item.dayIndex+1,kind:this.item.kind==='meal'?'meal':'attraction'}},
+ path(){return '/api/travel-plan/results/'+encodeURIComponent(this.resultId)+'/place-inspiration'},
+ async load(){this.abort?.abort();this.abort=new AbortController();this.loading=true;try{const r=await api.get(this.path(),{params:this.params(),signal:this.abort.signal,timeout:110000});if(!this.dead)this.report=r.data}catch(e){if(!this.dead&&e.code!=='ERR_CANCELED')this.report={status:'unavailable',notes:[]}}finally{if(!this.dead)this.loading=false}},
+ async preview(note){if(this.reading[note.id]||this.previews[note.id])return;this.reading={...this.reading,[note.id]:true};try{const r=await api.get(this.path()+'/'+encodeURIComponent(note.id),{params:this.params(),signal:this.abort.signal,timeout:110000});if(!this.dead)this.previews={...this.previews,[note.id]:r.data}}catch(e){if(!this.dead)this.previews={...this.previews,[note.id]:{status:'unavailable'}}}finally{if(!this.dead)this.reading={...this.reading,[note.id]:false}}}
+ },render(){const notes=this.report?.notes||[];return h('section',{class:'ez-place-notes','aria-label':'小红书相关攻略'},[
+ h('header',{class:'ez-place-notes-head'},[h('h3',null,this.item.kind==='meal'?'小红书 · 餐饮体验':'小红书 · 游玩攻略'),h('span',null,'相关笔记')]),
+ h('p',{class:'ez-note'},'参考真实游客体验。点赞收藏为笔记互动快照，营业、菜单与价格请另行核实。'),
+ this.loading?h('div',{class:'ez-notes-loading',role:'status'},[h('span',{class:'ez-note-pulse'}),h('span',null,'正在查找这个地点的攻略…')]):notes.length?h('div',{class:'ez-note-grid'},notes.map(note=>h('article',{class:'ez-note-card',key:note.id},[
+ note.cover_url?h('a',{href:note.url,target:'_blank',rel:'noopener noreferrer',tabindex:-1,'aria-hidden':'true'},[h('img',{src:note.cover_url,alt:'',loading:'lazy',referrerpolicy:'no-referrer',onError:e=>{e.target.style.display='none'}})]):null,
+ h('div',{class:'ez-note-card-body'},[note.adopted?h('span',{class:'ez-note-adopted'},'已用于本行程'):null,h('a',{href:note.url,target:'_blank',rel:'noopener noreferrer',class:'ez-note-title'},note.title),h('p',{class:'ez-note-metrics'},`点赞 ${note.metrics_approximate&&note.likes!=null?'约':''}${metric(note.likes)} · 收藏 ${note.metrics_approximate&&note.collections!=null?'约':''}${metric(note.collections)}`),
+ (this.previews[note.id]?.excerpt||note.excerpt)?h('blockquote',null,this.previews[note.id]?.excerpt||note.excerpt):this.previews[note.id]?h('p',{class:'ez-note'},'摘录暂不可用，可打开原攻略查看。'):h('button',{type:'button',class:'ez-note-read',disabled:this.reading[note.id],onClick:()=>this.preview(note)},this.reading[note.id]?'正在读取…':'查看笔记摘录'),
+ h('a',{href:note.url,target:'_blank',rel:'noopener noreferrer',class:'ez-note-origin'},'打开原攻略 ↗')])
+ ]))):h('div',{class:'ez-notes-empty'},[h('p',null,statuses[this.report?.status]||'攻略暂时无法获取，地点介绍和导航仍可使用。'),!['empty','disabled','quota'].includes(this.report?.status)?h('button',{type:'button',class:'ez-secondary',onClick:()=>this.load()},'重新查询'):null]),
+ notes.length?h('small',{class:'ez-note'},'相关笔记不代表已采纳；已用于行程的攻略会单独标记。'):null
+ ])}}
+}
+export function createLazyInsights(h){return {name:'LazyMapInsights',inheritAttrs:false,props:['component','name','city','lat','lng','placeKey'],data(){return {opened:false}},render(){return h('details',{class:'ez-map-insights',onToggle:e=>{this.opened=e.target.open}},[h('summary',null,'地图评价与营业信息'),this.opened?h(this.component,{name:this.name,city:this.city,lat:this.lat,lng:this.lng,placeKey:this.placeKey,...this.$attrs}):null])}}}

@@ -1,7 +1,8 @@
 """地图服务API路由"""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional
+from ...services.guest_guard import require_owner
 from ...models.schemas import (
     POISearchRequest,
     POISearchResponse,
@@ -14,7 +15,7 @@ from ...services.amap_service import get_amap_service
 from ...services.mapbox_service import get_mapbox_service
 from ...tools.debug_trace import dbg
 
-router = APIRouter(prefix="/map", tags=["地图服务"])
+router = APIRouter(prefix="/map", tags=["地图服务"], dependencies=[Depends(require_owner)])
 
 
 @router.get(

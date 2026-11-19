@@ -42,6 +42,7 @@ def parse_xml(text: str) -> Any:
                     "id": st.attrib.get("eva") or st.attrib.get("id") or "",
                     "name": st.attrib.get("name") or "",
                     "type": "station",
+                    "alt_ids": [m for m in (st.attrib.get("meta") or "").split("|") if m],
                 }
             )
         return stations
@@ -120,6 +121,7 @@ def normalize_stations(payload: Any) -> List[DbStation]:
                 latitude=item.get("latitude"),
                 longitude=item.get("longitude"),
                 distance=item.get("distance"),
+                alt_ids=[str(x) for x in (item.get("alt_ids") or [])],
             )
         )
     return out
